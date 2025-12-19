@@ -501,8 +501,13 @@ if ss["pending_preview"]:
 
 # 4. Map & List
 m = build_map(ss["stops"], ss["legs_between"])
-st_folium(m, height=500, width=None, key=f"map_{ss['map_version']}")
-
+st_folium(
+    m, 
+    height=500, 
+    width=None, 
+    key=f"map_{ss['map_version']}", 
+    returned_objects=[]  # <--- THIS IS THE SPEED FIX
+)
 st.divider()
 
 if ss["stops"] and HAS_SORTABLES:
