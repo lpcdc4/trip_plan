@@ -90,18 +90,16 @@ def save_shared(payload: dict):
     if sb is None:
         return False
     try:
-        sb.table("itineraries").upsert({"id": shared_id(), "data": payload}).execute()
+        # Force updated_at to change so other clients detect updates.
+        now_iso = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
+        sb.table("itineraries").upsert(
+            {"id": shared_id(), "data": payload, "updated_at": now_iso}
+        ).execute()
         return True
     except Exception:
         return False
 
-# ----------------------- External services -----------------------
-NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
-OSRM_ROUTE = "https://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}"
-DEFAULT_USER_AGENT = "itinerary-planner/1.0 (personal use)"
 
-
-# ----------------------- Session state -----------------------
 def ensure_state():
     ss = st.session_state
     ss.setdefault("trip_name", "My Trip")
