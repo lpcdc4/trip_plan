@@ -35,9 +35,12 @@ except Exception:
     sort_items = None
 
 # ----------------------- External services -----------------------
-NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
+#NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
 OSRM_ROUTE = "https://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}"
 DEFAULT_USER_AGENT = "my-trip-planner-app-v1 (contact: myemail@example.com)"
+
+# Add this new URL
+PHOTON_SEARCH = "https://photon.komoot.io/api/"
 
 # ----------------------- Supabase Setup -----------------------
 # We try to grab secrets from st.secrets (Streamlit Cloud) or fail gracefully
@@ -213,20 +216,43 @@ def forward_search(query: str, user_agent: str, limit: int = 8) -> List[Dict]:
     if len(query) < 3:
         return []
 
-    params = {"q": query, "format": "jsonv2", "limit": limit, "addressdetails": 0}
+    # Photon uses a simpler API structure
+    params = {"q": query, "limit": limit}
+    
+    # Photon is less strict about User-Agent, but keeping a good one is best practice
     headers = {"User-Agent": user_agent}
 
     try:
-        r = requests.get(NOMINATIM_SEARCH, params=params, headers=headers, timeout=5)
+        r = requests.get(PHOTON_SEARCH, params=params, headers=headers, timeout=5)
         r.raise_for_status()
-        results = r.json()
-        return [
-            {"name": x.get("display_name", query), "lat": float(x["lat"]), "lon": float(x["lon"])}
-            for x in (results or [])
-        ]
+        data = r.json()
+        
+        # Photon returns GeoJSON, so we parse "features"
+        results = []
+        for feature in data.get("features", []):
+            props = feature.get("properties", {})
+            coords = feature.get("geometry", {}).get("coordinates", [])
+            
+            if len(coords) == 2:
+                # Construct a nice name (Name, City, Country)
+                name_parts = [
+                    props.get("name"), 
+                    props.get("city"), 
+                    props.get("country")
+                ]
+                # Filter out None values and join with commas
+                display_name = ", ".join([p for p in name_parts if p])
+                
+                results.append({
+                    "name": display_name,
+                    "lat": float(coords[1]), # Photon gives [lon, lat]
+                    "lon": float(coords[0])
+                })
+        
+        return results
+
     except Exception as e:
-        # This will show the exact error in your app window
-        st.error(f"⚠️ Search Error: {e}")
+        st.error(f"Search failed: {e}")
         return []
 
 def osrm_driving_route(lat1, lon1, lat2, lon2) -> Dict:
