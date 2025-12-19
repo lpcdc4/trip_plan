@@ -562,6 +562,8 @@ def rebuild_legs_from_old(old_stops: List[Dict], old_legs: List[Optional[Dict]],
 
 # ----------------------- Autocomplete -----------------------
 # RESTORED: Uses the lookup dict pattern from original file
+# ----------------------- Autocomplete -----------------------
+# RESTORED: Uses the lookup dict pattern from original file
 def search_api_labels(query: str) -> List[str]:
     ss = st.session_state
     q = (query or "").strip()
@@ -569,8 +571,11 @@ def search_api_labels(query: str) -> List[str]:
         ss["search_lookup"] = {}
         return []
     
+    # FIX: Use .get() so it doesn't crash if session_state isn't ready yet
+    ua = ss.get("user_agent", DEFAULT_USER_AGENT)
+    
     # Use Photon backend
-    results = forward_search(q, ss["user_agent"], limit=10)
+    results = forward_search(q, ua, limit=10)
     
     lookup: Dict[str, Dict] = {}
     labels: List[str] = []
