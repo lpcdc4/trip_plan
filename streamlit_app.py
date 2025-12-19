@@ -641,7 +641,7 @@ ensure_legs_alignment()
 ss = st.session_state
 
 # Header
-c1, c2, c3 = st.columns([3, 2, 2])  # Changed from [3, 2, 2, 1] to [3, 2, 2]
+c1, c2, c3 = st.columns([3, 2, 2])
 with c1:
     new_name = st.text_input("Trip name", ss["trip_name"])
     if new_name != ss["trip_name"]:
@@ -653,12 +653,8 @@ with c2:
         ss["trip_start_date"] = new_start
         mark_dirty()
 with c3:
-    # Adding a small vertical spacer so the blue info box aligns with the input fields
-    st.write("") 
-    st.write("")
-    st.info(f"Cloud ID: `{ss['current_trip_id']}`")
-
-st.divider()
+    # Using a disabled input ensures pixel-perfect alignment with the other boxes
+    st.text_input("Cloud ID", value=ss['current_trip_id'], disabled=True)
 
 # Search above map
 st.markdown("### Add next stop")
