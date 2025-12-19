@@ -1,0 +1,9 @@
+streamlit>=1.36,<2
+streamlit-folium>=0.20
+folium>=0.16
+requests>=2.31
+streamlit-searchbox>=0.1.9
+streamlit-sortables>=0.3.1
+polyline>=2.0.2
+
+streamlit-autorefresh>=1.0.1

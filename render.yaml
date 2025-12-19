@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: itinerary-streamlit
+    env: docker
+    plan: free
+    autoDeploy: true
