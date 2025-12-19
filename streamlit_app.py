@@ -1,7 +1,6 @@
 # streamlit_app.py
 #
-# Streamlit itinerary planner (Photon + OSRM) + Supabase Sync
-# RESTORED UI VERSION: Exact original UI with Cloud Backend
+# Streamlit itinerary planner (Photon + OSRM) + Supabase Sync + PIN Protection
 #
 # Install:
 #   pip install streamlit folium streamlit-folium requests polyline streamlit-searchbox streamlit-sortables supabase
@@ -9,13 +8,11 @@
 # Run:
 #   streamlit run streamlit_app.py
 
-import json
-import re
+import hmac
 import uuid
-import time
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+import re
 from datetime import date, timedelta, datetime
+from typing import Dict, List, Optional, Tuple
 
 import requests
 import streamlit as st
@@ -24,50 +21,6 @@ from streamlit_folium import st_folium
 import polyline as polyline_lib
 from streamlit_searchbox import st_searchbox
 from supabase import create_client, Client
-
-# ----------------------- AUTHENTICATION -----------------------
-import hmac
-
-def check_password():
-    """Returns `True` if the user has entered the correct PIN."""
-    
-    # 1. If already validated, return True immediately
-    if st.session_state.get("password_correct", False):
-        return True
-
-    # 2. Configure the login screen (Centered layout)
-    # Note: On success, the app reruns, skips this, and uses the main app's "Wide" layout.
-    try:
-        st.set_page_config(page_title="Trip Login", layout="centered")
-    except:
-        pass # Ignore if config was already set
-
-    def password_entered():
-        # Check input against the secret PIN
-        secret_pin = st.secrets.get("APP_PIN", "0000")
-        if hmac.compare_digest(st.session_state["password_input"], str(secret_pin)):
-            st.session_state["password_correct"] = True
-            del st.session_state["password_input"] 
-        else:
-            st.session_state["password_correct"] = False
-
-    st.title("🔒 Trip Planner Protected")
-    st.text_input(
-        "Enter PIN to access:", 
-        type="password", 
-        on_change=password_entered, 
-        key="password_input"
-    )
-    
-    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
-        st.error("❌ Incorrect PIN")
-
-    return False
-
-# 3. Stop the app if the user is not logged in
-if not check_password():
-    st.stop()
-
 
 # ---------- optional drag & drop dependency ----------
 HAS_SORTABLES = False
@@ -81,8 +34,45 @@ except Exception:
     sort_items = None
 
 
-# ----------------------- External services -----------------------
-# UPDATED: Using Photon (Komoot) for reliable, unblocked search
+# ----------------------- AUTHENTICATION -----------------------
+def check_password():
+    """Returns `True` if the user had a correct password."""
+    
+    if st.session_state.get("password_correct", False):
+        return True
+
+    def password_entered():
+        # Retrieve PIN from secrets (Default to 0000 if not set)
+        secret_pin = st.secrets.get("APP_PIN", "0000")
+        if hmac.compare_digest(st.session_state["password_input"], str(secret_pin)):
+            st.session_state["password_correct"] = True
+            del st.session_state["password_input"] 
+        else:
+            st.session_state["password_correct"] = False
+
+    st.set_page_config(page_title="Trip Login", layout="centered")
+    st.title("🔒 Trip Planner Protected")
+    st.text_input(
+        "Enter PIN to access:", 
+        type="password", 
+        on_change=password_entered, 
+        key="password_input"
+    )
+    
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("❌ Incorrect PIN")
+
+    return False
+
+if not check_password():
+    st.stop()
+
+
+# ==============================================================================
+# MAIN APP STARTS HERE
+# ==============================================================================
+
+# ----------------------- Constants -----------------------
 PHOTON_SEARCH = "https://photon.komoot.io/api/"
 OSRM_ROUTE = "https://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}"
 DEFAULT_USER_AGENT = "itinerary-planner-cloud/1.0"
@@ -100,7 +90,6 @@ except Exception:
 
 # ----------------------- Session / DB Sync -----------------------
 def get_trip_id_from_url():
-    # Handle query params for different Streamlit versions
     if hasattr(st, "query_params"):
         qp = st.query_params
     else:
@@ -117,7 +106,6 @@ def load_from_supabase(trip_id: str):
         if response.data and len(response.data) > 0:
             return response.data[0]["trip_data"]
     except Exception as e:
-        # st.error(f"DB Load Error: {e}") 
         pass
     return None
 
@@ -141,7 +129,6 @@ def save_to_supabase():
             "trip_id": trip_id, 
             "trip_data": data_to_save
         }).execute()
-        
         ss["dirty"] = False
     except Exception as e:
         st.warning(f"Sync failed: {e}")
@@ -151,7 +138,6 @@ def init_state():
     if "initialized" in ss:
         return
 
-    # Load ID from URL or create new
     url_id = get_trip_id_from_url()
     
     if url_id:
@@ -204,7 +190,6 @@ def populate_state_from_data(data: dict):
     ss["stops"] = data.get("stops", [])
     ss["legs_between"] = data.get("legs_between", [])
     
-    # Recalculate IDs
     mx = 0
     for s in ss["stops"]:
         sid = str(s.get("id", ""))
@@ -214,7 +199,6 @@ def populate_state_from_data(data: dict):
             except: pass
     ss["next_stop_id"] = mx + 1
 
-    # Reset UI
     ss["search_lookup"] = {}
     ss["last_selected_label"] = None
     ss["search_key_version"] = 0
@@ -252,7 +236,7 @@ def fmt_date(d: Optional[date]) -> str:
 
 
 # ----------------------- External calls -----------------------
-# UPDATED: Uses Photon + Caching
+# UPDATED: Uses Photon + Caching + Crash Fix
 @st.cache_data(ttl=3600, show_spinner=False)
 def forward_search(query: str, user_agent: str, limit: int = 15) -> List[Dict]:
     if len(query) < 2:
@@ -313,7 +297,6 @@ def osrm_driving_route(lat1: float, lon1: float, lat2: float, lon2: float) -> Di
             "geometry_latlon": coords_latlon,
         }
     except:
-        # Fallback to straight line if routing fails
         return {
             "distance_m": None, "duration_s": None,
             "geometry_latlon": interpolate_line(lat1, lon1, lat2, lon2)
@@ -600,14 +583,11 @@ def rebuild_legs_from_old(old_stops: List[Dict], old_legs: List[Optional[Dict]],
         if kept:
             new_legs.append(kept)
         else:
-            new_legs.append(None) # Let user fill in, or could auto-route
+            new_legs.append(None) 
     return new_legs
 
 
 # ----------------------- Autocomplete -----------------------
-# RESTORED: Uses the lookup dict pattern from original file
-# ----------------------- Autocomplete -----------------------
-# RESTORED: Uses the lookup dict pattern from original file
 def search_api_labels(query: str) -> List[str]:
     ss = st.session_state
     q = (query or "").strip()
@@ -615,10 +595,9 @@ def search_api_labels(query: str) -> List[str]:
         ss["search_lookup"] = {}
         return []
     
-    # FIX: Use .get() so it doesn't crash if session_state isn't ready yet
+    # CRASH FIX: Use .get() so it doesn't crash if session_state isn't ready
     ua = ss.get("user_agent", DEFAULT_USER_AGENT)
     
-    # Use Photon backend
     results = forward_search(q, ua, limit=10)
     
     lookup: Dict[str, Dict] = {}
@@ -626,7 +605,6 @@ def search_api_labels(query: str) -> List[str]:
     for r in results:
         label = r["name"]
         j = 2
-        # Deduplicate identical labels in the dropdown
         while label in lookup:
             label = f"{r['name']} ({j})"
             j += 1
@@ -663,7 +641,7 @@ ensure_legs_alignment()
 ss = st.session_state
 
 # Header
-c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
+c1, c2, c3 = st.columns([3, 2, 2])  # Changed from [3, 2, 2, 1] to [3, 2, 2]
 with c1:
     new_name = st.text_input("Trip name", ss["trip_name"])
     if new_name != ss["trip_name"]:
@@ -675,13 +653,15 @@ with c2:
         ss["trip_start_date"] = new_start
         mark_dirty()
 with c3:
+    # Adding a small vertical spacer so the blue info box aligns with the input fields
+    st.write("") 
+    st.write("")
     st.info(f"Cloud ID: `{ss['current_trip_id']}`")
 
 st.divider()
 
 # Search above map
 st.markdown("### Add next stop")
-# Uses original style: returns string label, looks up in dictionary
 selected_label = st_searchbox(
     search_api_labels,
     key=f"searchbox_{ss['search_key_version']}",
@@ -693,7 +673,7 @@ selection = None
 if selected_label:
     selection = ss.get("search_lookup", {}).get(selected_label)
 
-# 1. Preview Stage (RESTORED from original)
+# 1. Preview Stage
 if selection and selected_label != ss["last_selected_label"]:
     ss["last_selected_label"] = selected_label
     ss["pending_preview"] = {"name": selection["name"], "lat": selection["lat"], "lon": selection["lon"]}
@@ -721,7 +701,7 @@ if selection:
             }
             st.rerun()
 
-# 2. Confirm Stage (RESTORED from original)
+# 2. Confirm Stage
 if ss["pending_stop"] is not None:
     p = ss["pending_stop"]
     is_first = (len(ss["stops"]) == 0)
@@ -773,7 +753,6 @@ st.divider()
 
 # Map
 m = build_map(ss["stops"], ss["legs_between"])
-# Keep the optimization so it doesn't lag
 st_folium(m, height=720, width=None, key=f"map_{ss['map_version']}", returned_objects=[])
 
 st.divider()
@@ -825,24 +804,61 @@ if ss["stops"]:
 if not ss["stops"]:
     st.info("No stops yet. Add one from the search box above.")
 else:
+    # UPDATED: New Collapsible Compact View
     blocks = itinerary_day_blocks(ss["stops"], ss["legs_between"])
     for b in blocks:
-        drive_hhmm = hhmm_from_seconds(b["drive_seconds"]) if b["drive_seconds"] else "00:00"
-        st.markdown(f"### Day {b['day']} ({fmt_date(b['date'])}) · Driving: **{drive_hhmm}**")
+        # Prepare Label
+        start_stop = ss["stops"][b["start"]]
+        end_stop = ss["stops"][b["end"]]
+        date_str = fmt_date(b["date"])
+        
+        # Calculate summary logic
+        modes = set()
+        for li, leg in b["legs"]:
+            if leg: modes.add(leg.get("mode", "car").lower())
+        
+        # Logic: If driving > 0 OR mixed/other modes exist
+        time_str = ""
+        if b["drive_seconds"] > 0:
+            time_str = f"Driving: {hhmm_from_seconds(b['drive_seconds'])}"
+        elif "plane" in modes:
+            time_str = "Flight"
+        elif "train" in modes:
+            time_str = "Train"
+        elif "bus" in modes:
+            time_str = "Bus"
+        elif len(b["legs"]) > 0:
+            time_str = "Travel"
+            
+        # Construct header
+        if b["start"] == b["end"]:
+             # Stayed in one place
+             header = f"Day {b['day']} ({date_str}) · {start_stop['name']}"
+        else:
+             # Moved
+             mid_part = f" · {time_str}" if time_str else ""
+             header = f"Day {b['day']} ({date_str}){mid_part} · {start_stop['name']} ➝ {end_stop['name']}"
 
-        for si in range(b["start"], b["end"] + 1):
-            st.markdown(stop_row_html(ss["stops"][si]), unsafe_allow_html=True)
+        # Render expander
+        with st.expander(header, expanded=False):
+            # Interleaved loop: Stop -> Leg -> Stop
+            for i in range(b["start"], b["end"] + 1):
+                # 1. Show the Stop
+                s = ss["stops"][i]
+                st.markdown(stop_row_html(s), unsafe_allow_html=True)
+                
+                # 2. Show the Leg (if valid and not the very last stop)
+                if i < b["end"]:
+                    leg = ss["legs_between"][i]
+                    if leg:
+                         summ = leg_summary(leg)
+                         note_html = f" — <em>{leg['note']}</em>" if leg.get("note") else ""
+                         # Visual separator for the leg
+                         st.caption(f"🔻 **{summ}**{note_html}")
+                    else:
+                         st.caption("🔻 *No travel details*")
 
-        if b["legs"]:
-            with st.expander("Show legs for this day", expanded=False):
-                for li, leg in b["legs"]:
-                    frm = ss["stops"][li]
-                    to = ss["stops"][li + 1]
-                    st.write(f"**{frm['id']} → {to['id']}** — {leg_summary(leg)}")
-                    if (leg.get("note") or "").strip():
-                        st.caption(leg["note"])
-
-# Editor (Hidden Section - RESTORED)
+# Editor (Hidden Section)
 if ss["show_editor"]:
     st.divider()
     st.markdown("## Edit itinerary (stops + legs)")
@@ -867,7 +883,6 @@ if ss["show_editor"]:
                 # Change / replace this stop
                 with st.expander("Change this stop (search)", expanded=False):
                     def _search_local(q: str) -> List[str]:
-                        # Re-use global search logic
                         return search_api_labels(q)
 
                     sel = st_searchbox(_search_local, key=f"chgstop_sb_{i}_{ss['search_key_version']}", placeholder="Type a place…", label="Search")
