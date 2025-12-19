@@ -103,7 +103,7 @@ def save_shared(payload: dict):
 def ensure_state():
     ss = st.session_state
     ss.setdefault("trip_name", "My Trip")
-    ss.setdefault("user_agent", DEFAULT_USER_AGENT)
+    ss.setdefault("user_agent", st.secrets.get("NOMINATIM_USER_AGENT", DEFAULT_USER_AGENT))
     ss.setdefault("trip_start_date", date.today())
 
 def _touch_input_activity():
@@ -774,16 +774,21 @@ st.set_page_config(page_title="Itinerary", layout="wide")
 require_pin()
 ensure_state()
 
-# Realtime sync: rerun every 1s when idle; pause while typing in search widgets.
+# Realtime sync: ALWAYS rerun every 1s (so other devices keep polling),
+# but only APPLY remote updates when the user is idle to avoid breaking search/typing UX.
 _detect_typing_activity()
 idle_for = time.time() - float(st.session_state.get("last_input_time", 0.0))
-if st.session_state.get("pause_refresh") and idle_for > 2.0:
+is_idle = idle_for > 2.0
+if st.session_state.get("pause_refresh") and is_idle:
     st.session_state["pause_refresh"] = False
-if not st.session_state.get("pause_refresh"):
-    st_autorefresh(interval=1000, key="__rt_tick")
+
+# Always rerun every second
+st_autorefresh(interval=1000, key="__rt_tick")
 
 bootstrap_shared_if_missing()
-poll_shared_if_newer()
+if is_idle:
+    poll_shared_if_newer()
+
 ensure_legs_alignment()
 ss = st.session_state
 
