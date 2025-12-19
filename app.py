@@ -16,6 +16,7 @@
 #   streamlit run itinerary.py
 
 import json
+import time
 import datetime
 import re
 from pathlib import Path
@@ -24,27 +25,8 @@ from datetime import date, timedelta
 
 import requests
 import streamlit as st
-
-def require_pin():
-    pin = st.secrets.get("PIN", "")
-    if not pin:
-        return  # no PIN configured => no lock
-    if st.session_state.get("pin_ok"):
-        return
-
-    st.title("Private itinerary")
-    entered = st.text_input("PIN", type="password")
-    if st.button("Enter"):
-        if entered == pin:
-            st.session_state["pin_ok"] = True
-            st.rerun()
-        else:
-            st.error("Wrong PIN")
-    st.stop()
-
-require_pin()
-
 from streamlit_autorefresh import st_autorefresh
+from supabase import create_client
 import folium
 from streamlit_folium import st_folium
 import polyline as polyline_lib
@@ -64,6 +46,55 @@ except Exception:
     sort_items = None
 
 
+# ----------------------- Simple PIN gate (Streamlit Secrets) -----------------------
+def require_pin():
+    pin = st.secrets.get("PIN", "")
+    if not pin:
+        return
+    if st.session_state.get("_pin_ok"):
+        return
+    st.title("Private itinerary")
+    entered = st.text_input("PIN", type="password")
+    if st.button("Enter"):
+        if entered == pin:
+            st.session_state["_pin_ok"] = True
+            st.rerun()
+        else:
+            st.error("Wrong PIN")
+    st.stop()
+
+# ----------------------- Supabase (shared storage) -----------------------
+@st.cache_resource
+def sb_client():
+    url = st.secrets.get("SUPABASE_URL", "")
+    key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not url or not key:
+        return None
+    return create_client(url, key)
+
+def shared_id():
+    return st.secrets.get("ITINERARY_ID", "main")
+
+def load_shared():
+    sb = sb_client()
+    if sb is None:
+        return None
+    try:
+        res = sb.table("itineraries").select("data,updated_at").eq("id", shared_id()).single().execute()
+        return res.data
+    except Exception:
+        return None
+
+def save_shared(payload: dict):
+    sb = sb_client()
+    if sb is None:
+        return False
+    try:
+        sb.table("itineraries").upsert({"id": shared_id(), "data": payload}).execute()
+        return True
+    except Exception:
+        return False
+
 # ----------------------- External services -----------------------
 NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
 OSRM_ROUTE = "https://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}"
@@ -76,7 +107,26 @@ def ensure_state():
     ss.setdefault("trip_name", "My Trip")
     ss.setdefault("user_agent", DEFAULT_USER_AGENT)
     ss.setdefault("trip_start_date", date.today())
-    ss.setdefault("last_autoload_mtime", 0.0)
+
+def _touch_input_activity():
+    ss = st.session_state
+    ss["pause_refresh"] = True
+    ss["last_input_time"] = time.time()
+
+def _detect_typing_activity():
+    ss = st.session_state
+    keys = [k for k in ss.keys() if k.startswith("searchbox_") or k.startswith("chgstop_sb_")]
+    snap = ss.get("_typing_snapshot", {})
+    new_snap = {}
+    changed = False
+    for k in keys:
+        v = ss.get(k)
+        new_snap[k] = v
+        if snap.get(k) != v:
+            changed = True
+    ss["_typing_snapshot"] = new_snap
+    if changed:
+        _touch_input_activity()
 
     ss.setdefault("stops", [])          # list[dict]
     ss.setdefault("legs_between", [])   # list[Optional[dict]] length = len(stops)-1
@@ -92,6 +142,10 @@ def ensure_state():
     ss.setdefault("search_lookup", {})
     ss.setdefault("last_selected_label", None)
     ss.setdefault("search_key_version", 0)
+    ss.setdefault("pause_refresh", False)
+    ss.setdefault("last_input_time", 0.0)
+    ss.setdefault("last_seen_updated_at", "")
+    ss.setdefault("_typing_snapshot", {})
 
     ss.setdefault("sortable_key_version", 0)
     ss.setdefault("sortable_items_cache", None)
@@ -546,60 +600,26 @@ def rebuild_legs_from_old(old_stops: List[Dict], old_legs: List[Optional[Dict]],
     return new_legs
 
 # ----------------------- Autosave -----------------------
-def autoload_if_newer():
-    ss = st.session_state
-    json_path = Path("exports") / "autosave_itinerary.json"
-    if not json_path.exists():
-        return
-    try:
-        mtime = float(json_path.stat().st_mtime)
-    except Exception:
-        return
-    if mtime <= float(ss.get("last_autoload_mtime", 0.0)):
-        return
-    try:
-        data = json.loads(json_path.read_text(encoding="utf-8"))
-    except Exception:
-        ss["last_autoload_mtime"] = mtime
-        return
-
-    # Last-writer-wins: always adopt newest-on-disk state.
-    ss["trip_name"] = data.get("name", ss.get("trip_name", "My Trip"))
-    try:
-        if data.get("trip_start_date"):
-            ss["trip_start_date"] = date.fromisoformat(data["trip_start_date"])
-    except Exception:
-        pass
-    ss["stops"] = data.get("stops", ss.get("stops", []))
-    ss["legs_between"] = data.get("legs_between", ss.get("legs_between", []))
-    ss["dirty"] = False
-    ss["map_version"] += 1
-    ss["last_autoload_mtime"] = mtime
-
 def autosave():
     ss = st.session_state
-    if not ss["dirty"]:
-        return
-
-    out_dir = Path("exports")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    json_path = out_dir / "autosave_itinerary.json"
-    html_path = out_dir / "autosave_map.html"
-
-    data = {
+    payload = {
         "name": ss["trip_name"],
-        "trip_start_date": ss["trip_start_date"].isoformat(),
+        "trip_start_date": ss["trip_start_date"].isoformat() if hasattr(ss["trip_start_date"], "isoformat") else str(ss["trip_start_date"]),
         "stops": ss["stops"],
         "legs_between": ss["legs_between"],
     }
-    json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    build_map(ss["stops"], ss["legs_between"]).save(str(html_path))
 
-    ss["last_save_paths"] = (str(json_path.resolve()), str(html_path.resolve()))
+    # Shared save (Supabase)
+    save_shared(payload)
+
+    # Local fallback (export/debug)
+    out_dir = Path("exports")
+    out_dir.mkdir(exist_ok=True)
+    (out_dir / "autosave_itinerary.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
     ss["dirty"] = False
 
 
-# ----------------------- Import -----------------------
 def import_json_bytes(raw: bytes):
     ss = st.session_state
     try:
@@ -718,11 +738,54 @@ def stop_row_html(s: Dict) -> str:
     """
 
 
+def poll_shared_if_newer():
+    ss = st.session_state
+    row = load_shared()
+    if not row:
+        return
+    updated_at = str(row.get("updated_at") or "")
+    if not updated_at:
+        return
+    if updated_at != ss.get("last_seen_updated_at", ""):
+        data = row.get("data") or {}
+        ss["trip_name"] = data.get("name", ss.get("trip_name", "My Trip"))
+        try:
+            if data.get("trip_start_date"):
+                ss["trip_start_date"] = date.fromisoformat(data["trip_start_date"])
+        except Exception:
+            pass
+        ss["stops"] = data.get("stops", ss.get("stops", []))
+        ss["legs_between"] = data.get("legs_between", ss.get("legs_between", []))
+        ss["dirty"] = False
+        ss["map_version"] += 1
+        ss["last_seen_updated_at"] = updated_at
+
+def bootstrap_shared_if_missing():
+    ss = st.session_state
+    if ss.get("_bootstrapped_shared"):
+        return
+    ss["_bootstrapped_shared"] = True
+    row = load_shared()
+    if not row:
+        autosave()
+    else:
+        ss["last_seen_updated_at"] = str(row.get("updated_at") or "")
+
 # ======================= APP =======================
 st.set_page_config(page_title="Itinerary", layout="wide")
+require_pin()
 ensure_state()
-st_autorefresh(interval=1000, key="__rt_tick")
-autoload_if_newer()
+
+# Realtime sync: rerun every 1s when idle; pause while typing in search widgets.
+_detect_typing_activity()
+idle_for = time.time() - float(st.session_state.get("last_input_time", 0.0))
+if st.session_state.get("pause_refresh") and idle_for > 2.0:
+    st.session_state["pause_refresh"] = False
+if not st.session_state.get("pause_refresh"):
+    st_autorefresh(interval=1000, key="__rt_tick")
+
+bootstrap_shared_if_missing()
+poll_shared_if_newer()
 ensure_legs_alignment()
 ss = st.session_state
 
