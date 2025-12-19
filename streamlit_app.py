@@ -800,56 +800,77 @@ if ss["stops"]:
 if not ss["stops"]:
     st.info("No stops yet. Add one from the search box above.")
 else:
-    # UPDATED: New Collapsible Compact View
+    # UPDATED: Collapsible Compact View with "Stay Day" Logic
     blocks = itinerary_day_blocks(ss["stops"], ss["legs_between"])
     for b in blocks:
-        # Prepare Label
         start_stop = ss["stops"][b["start"]]
         end_stop = ss["stops"][b["end"]]
         date_str = fmt_date(b["date"])
         
-        # Calculate summary logic
+        # --- LOGIC: Detect if this is a "Stay" day (Same place, no intermediate stops) ---
+        is_direct_link = (b["end"] == b["start"] + 1) # Only 2 stops (Start -> End)
+        
+        # Check distance/location
+        is_same_loc = False
+        if is_direct_link:
+            leg = ss["legs_between"][b["start"]]
+            if leg:
+                # If distance is very short (< 1km), treat as same place
+                dist = leg.get("distance_m") or 0
+                if dist < 1000: 
+                    is_same_loc = True
+            else:
+                # Fallback: Check if names are identical
+                if start_stop["name"] == end_stop["name"]:
+                    is_same_loc = True
+
+        # Definition of a "Stay Day": Direct link + Same Location
+        is_stay_day = is_direct_link and is_same_loc
+        # -------------------------------------------------------------------------------
+
+        # Calculate summary modes
         modes = set()
         for li, leg in b["legs"]:
             if leg: modes.add(leg.get("mode", "car").lower())
         
-        # Logic: If driving > 0 OR mixed/other modes exist
-        time_str = ""
-        if b["drive_seconds"] > 0:
-            time_str = f"Driving: {hhmm_from_seconds(b['drive_seconds'])}"
-        elif "plane" in modes:
-            time_str = "Flight"
-        elif "train" in modes:
-            time_str = "Train"
-        elif "bus" in modes:
-            time_str = "Bus"
-        elif len(b["legs"]) > 0:
-            time_str = "Travel"
-            
-        # Construct header
-        if b["start"] == b["end"]:
-             # Stayed in one place
-             header = f"Day {b['day']} ({date_str}) · {start_stop['name']}"
+        # Build the Header string
+        if is_stay_day:
+            # Simple Header for Stay Days
+            header = f"Day {b['day']} ({date_str}) · {start_stop['name']}"
+        elif b["start"] == b["end"]:
+            # Single stop day (rare edge case)
+            header = f"Day {b['day']} ({date_str}) · {start_stop['name']}"
         else:
-             # Moved
-             mid_part = f" · {time_str}" if time_str else ""
-             header = f"Day {b['day']} ({date_str}){mid_part} · {start_stop['name']} ➝ {end_stop['name']}"
+            # Standard Travel Header
+            time_str = ""
+            if b["drive_seconds"] > 0:
+                time_str = f"Driving: {hhmm_from_seconds(b['drive_seconds'])}"
+            elif "plane" in modes: time_str = "Flight"
+            elif "train" in modes: time_str = "Train"
+            elif "bus" in modes: time_str = "Bus"
+            elif len(b["legs"]) > 0: time_str = "Travel"
+            
+            mid_part = f" · {time_str}" if time_str else ""
+            header = f"Day {b['day']} ({date_str}){mid_part} · {start_stop['name']} ➝ {end_stop['name']}"
 
-        # Render expander
+        # Render the Day Block
         with st.expander(header, expanded=False):
-            # Interleaved loop: Stop -> Leg -> Stop
             for i in range(b["start"], b["end"] + 1):
-                # 1. Show the Stop
                 s = ss["stops"][i]
+                
+                # Show the Stop
                 st.markdown(stop_row_html(s), unsafe_allow_html=True)
                 
-                # 2. Show the Leg (if valid and not the very last stop)
+                # Show the Leg (only if NOT the last stop AND NOT a stay day)
                 if i < b["end"]:
+                    if is_stay_day:
+                        # HIDDEN: We skip rendering the leg because it's just 0km in the same city
+                        continue
+                    
                     leg = ss["legs_between"][i]
                     if leg:
                          summ = leg_summary(leg)
                          note_html = f" — <em>{leg['note']}</em>" if leg.get("note") else ""
-                         # Visual separator for the leg
                          st.caption(f"🔻 **{summ}**{note_html}")
                     else:
                          st.caption("🔻 *No travel details*")
