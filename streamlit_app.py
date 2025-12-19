@@ -208,41 +208,49 @@ def day_to_date(day_num: int) -> date:
 def fmt_date(d: Optional[date]) -> str:
     return d.isoformat() if d else ""
 
-def forward_search(query: str, user_agent: str, limit: int = 8) -> List[Dict]:
-    """Search using Photon API (cleaner results, fewer blocks)."""
+@st.cache_data(ttl=3600, show_spinner=False)
+def forward_search(query: str, user_agent: str, limit: int = 10) -> List[Dict]:
+    """Search using Photon API with caching and deduplication."""
     if len(query) < 3:
         return []
 
-    params = {"q": query, "limit": limit}
+    params = {"q": query, "limit": limit, "lang": "en"}
     headers = {"User-Agent": user_agent}
 
     try:
-        r = requests.get(PHOTON_SEARCH, params=params, headers=headers, timeout=5)
+        r = requests.get(PHOTON_SEARCH, params=params, headers=headers, timeout=3)
         r.raise_for_status()
         data = r.json()
         
         results = []
+        seen_names = set() # To track duplicates
+        
         for feature in data.get("features", []):
             props = feature.get("properties", {})
             coords = feature.get("geometry", {}).get("coordinates", [])
             
             if len(coords) == 2:
-                # Build a nice name
                 name = props.get("name")
                 city = props.get("city")
                 country = props.get("country")
                 
+                # Create a clean label
                 parts = [p for p in [name, city, country] if p]
                 display_name = ", ".join(parts)
                 
+                # DEDUPLICATION: If we already have "Chennai, India", skip this one
+                if display_name in seen_names:
+                    continue
+                
+                seen_names.add(display_name)
+                
                 results.append({
                     "name": display_name,
-                    "lat": float(coords[1]), # Photon is [lon, lat]
+                    "lat": float(coords[1]),
                     "lon": float(coords[0])
                 })
         return results
-    except Exception as e:
-        # st.error(f"Search error: {e}") # Uncomment to debug
+    except Exception:
         return []
 
 def osrm_driving_route(lat1, lon1, lat2, lon2) -> Dict:
@@ -451,31 +459,38 @@ with c2:
 st.divider()
 
 # -------------------------------------------------------------
-# 3. Search & Add (Clean UI Version)
+# 3. Search & Add (Fast & Deduplicated)
 # -------------------------------------------------------------
 st.markdown("### Add Stop")
 
+# We define the search function wrapper
 def search_interface(query):
+    # This now hits the cache first, making typing much smoother
     results = forward_search(query, ss['user_agent'])
     ss['latest_search_results'] = results
     return [(r['name'], i) for i, r in enumerate(results)]
 
+# The search box
 selected_index = st_searchbox(
     search_interface,
     key=f"sb_{ss['search_key_version']}",
     placeholder="Search city or place...",
-    label=None
+    label=None,
+    clear_on_submit=True # Helps reset the box after selection
 )
 
+# LOGIC FIX: We handle the selection immediately without a forced rerun
 if selected_index is not None:
     try:
         selection = ss['latest_search_results'][selected_index]
         ss["pending_preview"] = selection
         ss["map_center"] = (selection["lat"], selection["lon"])
-        st.rerun()
+        # We DO NOT call st.rerun() here anymore. 
+        # Streamlit will just flow down and render the confirmation box below.
     except (IndexError, KeyError, TypeError):
         pass
 
+# The Confirm Box
 if ss["pending_preview"]:
     p = ss["pending_preview"]
     with st.container(border=True):
@@ -491,9 +506,11 @@ if ss["pending_preview"]:
                 if len(ss["stops"]) > 1:
                     prev_idx = len(ss["stops"]) - 2
                     set_leg_between(prev_idx, "car", "")
+                
+                # Clear state
                 ss["pending_preview"] = None
                 ss["search_key_version"] += 1
-                st.rerun()
+                st.rerun() # Only rerun AFTER adding the stop
         with btn_col2:
             if st.button("Cancel"):
                 ss["pending_preview"] = None
