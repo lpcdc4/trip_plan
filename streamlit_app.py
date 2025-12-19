@@ -25,6 +25,50 @@ import polyline as polyline_lib
 from streamlit_searchbox import st_searchbox
 from supabase import create_client, Client
 
+# ----------------------- AUTHENTICATION -----------------------
+import hmac
+
+def check_password():
+    """Returns `True` if the user has entered the correct PIN."""
+    
+    # 1. If already validated, return True immediately
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # 2. Configure the login screen (Centered layout)
+    # Note: On success, the app reruns, skips this, and uses the main app's "Wide" layout.
+    try:
+        st.set_page_config(page_title="Trip Login", layout="centered")
+    except:
+        pass # Ignore if config was already set
+
+    def password_entered():
+        # Check input against the secret PIN
+        secret_pin = st.secrets.get("APP_PIN", "0000")
+        if hmac.compare_digest(st.session_state["password_input"], str(secret_pin)):
+            st.session_state["password_correct"] = True
+            del st.session_state["password_input"] 
+        else:
+            st.session_state["password_correct"] = False
+
+    st.title("🔒 Trip Planner Protected")
+    st.text_input(
+        "Enter PIN to access:", 
+        type="password", 
+        on_change=password_entered, 
+        key="password_input"
+    )
+    
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("❌ Incorrect PIN")
+
+    return False
+
+# 3. Stop the app if the user is not logged in
+if not check_password():
+    st.stop()
+
+
 # ---------- optional drag & drop dependency ----------
 HAS_SORTABLES = False
 sort_items = None
