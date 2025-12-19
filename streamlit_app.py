@@ -37,7 +37,7 @@ except Exception:
 # ----------------------- External services -----------------------
 NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
 OSRM_ROUTE = "https://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}"
-DEFAULT_USER_AGENT = "itinerary-planner/2.0 (supabase-sync)"
+DEFAULT_USER_AGENT = "my-trip-planner-app-v1 (contact: myemail@example.com)"
 
 # ----------------------- Supabase Setup -----------------------
 # We try to grab secrets from st.secrets (Streamlit Cloud) or fail gracefully
@@ -210,16 +210,33 @@ def fmt_date(d: Optional[date]) -> str:
     return d.isoformat() if d else ""
 
 def forward_search(query: str, user_agent: str, limit: int = 8) -> List[Dict]:
+    # Don't search for tiny strings
+    if len(query) < 3: 
+        return []
+
     params = {"q": query, "format": "jsonv2", "limit": limit, "addressdetails": 0}
     headers = {"User-Agent": user_agent}
+    
     try:
         r = requests.get(NOMINATIM_SEARCH, params=params, headers=headers, timeout=5)
+        
+        # If we are blocked, raise an error so we see it in the logs
         r.raise_for_status()
+        
+        results = r.json()
         return [
-            {"name": x.get("display_name", query), "lat": float(x["lat"]), "lon": float(x["lon"])}
-            for x in (r.json() or [])
+            {
+                "name": x.get("display_name", query),
+                "lat": float(x["lat"]),
+                "lon": float(x["lon"]),
+            }
+            for x in results
         ]
-    except:
+    except Exception as e:
+        # This will print the error to your Streamlit Cloud logs
+        print(f"SEARCH ERROR: {e}")
+        # Optional: Un-comment the line below to see the error on the app UI for debugging
+        # st.error(f"Search failed: {e}")
         return []
 
 def osrm_driving_route(lat1, lon1, lat2, lon2) -> Dict:
