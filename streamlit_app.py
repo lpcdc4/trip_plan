@@ -210,33 +210,23 @@ def fmt_date(d: Optional[date]) -> str:
     return d.isoformat() if d else ""
 
 def forward_search(query: str, user_agent: str, limit: int = 8) -> List[Dict]:
-    # Don't search for tiny strings
-    if len(query) < 3: 
+    if len(query) < 3:
         return []
 
     params = {"q": query, "format": "jsonv2", "limit": limit, "addressdetails": 0}
     headers = {"User-Agent": user_agent}
-    
+
     try:
         r = requests.get(NOMINATIM_SEARCH, params=params, headers=headers, timeout=5)
-        
-        # If we are blocked, raise an error so we see it in the logs
         r.raise_for_status()
-        
         results = r.json()
         return [
-            {
-                "name": x.get("display_name", query),
-                "lat": float(x["lat"]),
-                "lon": float(x["lon"]),
-            }
-            for x in results
+            {"name": x.get("display_name", query), "lat": float(x["lat"]), "lon": float(x["lon"])}
+            for x in (results or [])
         ]
     except Exception as e:
-        # This will print the error to your Streamlit Cloud logs
-        print(f"SEARCH ERROR: {e}")
-        # Optional: Un-comment the line below to see the error on the app UI for debugging
-        # st.error(f"Search failed: {e}")
+        # This will show the exact error in your app window
+        st.error(f"⚠️ Search Error: {e}")
         return []
 
 def osrm_driving_route(lat1, lon1, lat2, lon2) -> Dict:
