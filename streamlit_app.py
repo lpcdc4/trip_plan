@@ -447,22 +447,23 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
             icon=folium.Icon(color="green", icon="search"),
         ).add_to(m)
 
+    # ... inside build_map ...
+    
     for s in stops:
         is_overnight = s.get("overnight")
-        # ICONS: Blue Home for Overnight, Gray Pin for day stop
         if is_overnight:
             icon = folium.Icon(color="blue", icon="home")
             od_str = "Sì"
         else:
-            # "map-pin" is a standard FontAwesome icon, cleaner than "info-sign"
             icon = folium.Icon(color="gray", icon="map-pin", prefix="fa")
             od_str = "No"
             
-        popup = f"<b>{s['name']}</b><br>ID: {s['id']}<br>Notte: {od_str}"
+        # CHANGED: Removed ID from popup, used Name for tooltip
+        popup = f"<b>{s['name']}</b><br>Notte: {od_str}"
         if s.get("note"):
             popup += f"<br>Note: {s['note']}"
             
-        folium.Marker([s["lat"], s["lon"]], popup=popup, tooltip=s["id"], icon=icon).add_to(m)
+        folium.Marker([s["lat"], s["lon"]], popup=popup, tooltip=s["name"], icon=icon).add_to(m)
         
     for i in range(len(stops) - 1):
         leg = legs_between[i] if i < len(legs_between) else None
@@ -471,14 +472,12 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
 
         mode = (leg.get("mode") or "").lower()
         dash = "1,0"
-        if mode == "bus":
-            dash = "6,6"
-        elif mode == "train":
-            dash = "2,8"
-        elif mode == "plane":
-            dash = "8,10"
+        if mode == "bus": dash = "6,6"
+        elif mode == "train": dash = "2,8"
+        elif mode == "plane": dash = "8,10"
 
-        tooltip = f"{mode.upper()} · {stops[i]['id']} → {stops[i+1]['id']}"
+        # CHANGED: Shows Names in tooltip instead of IDs
+        tooltip = f"{mode.upper()} · {stops[i]['name']} → {stops[i+1]['name']}"
         if leg.get("duration_s") is not None:
             tooltip += f" · {hhmm_from_seconds(leg['duration_s'])}"
         if leg.get("distance_m") is not None:
