@@ -686,7 +686,7 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
         if "train" in modes or "treno" in modes: time_parts.append("Treno")
         if "bus" in modes: time_parts.append("Bus")
         if "ferry" in modes or "traghetto" in modes: time_parts.append("Traghetto")
-        if not time_parts and len(b["legs"]) > 0: time_parts.append("Viaggio")
+        if not time_parts and len(b["legs"]) > 0: time_parts.append("")
         
         mid_part = f"   |   {' + '.join(time_parts)}" if time_parts else ""
         header_text = f"GIORNO {b['day']}  -  {date_str}{mid_part}"
@@ -1057,7 +1057,7 @@ else:
         if "ferry" in modes or "traghetto" in modes: time_parts.append("Traghetto")
             
         if not time_parts and len(b["legs"]) > 0:
-            time_parts.append("Viaggio")
+            time_parts.append("")
             
         time_str = " + ".join(time_parts)
 
