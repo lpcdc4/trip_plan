@@ -628,13 +628,65 @@ ss = st.session_state
 if ss.get("print_mode"):
     st.markdown("""
         <style>
-            [data-testid="stSidebar"] { display: none !important; }
-            header { display: none !important; }
-            .block-container { padding-top: 0rem !important; }
-            iframe { height: 500px !important; } 
+            /* Load a nice font for the document */
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+            
+            @media print {
+                @page { 
+                    margin: 1.5cm; 
+                    size: A4; 
+                }
+                
+                html, body, [data-testid="stAppViewContainer"] {
+                    font-family: 'Inter', sans-serif !important;
+                    background-color: white !important;
+                    color: black !important;
+                }
+
+                /* HIDE UI ELEMENTS */
+                [data-testid="stSidebar"], 
+                [data-testid="stHeader"], 
+                .stDeployButton, 
+                footer, 
+                #MainMenu,
+                button {
+                    display: none !important; 
+                }
+
+                /* RESET LAYOUT */
+                .block-container {
+                    padding: 0 !important;
+                    max-width: 100% !important;
+                    margin: 0 !important;
+                }
+                
+                /* MAP STYLING */
+                iframe { 
+                    height: 500px !important; 
+                    width: 100% !important; 
+                    border: 1px solid #ddd !important; 
+                    border-radius: 8px !important;
+                    page-break-inside: avoid; /* Try not to split map across pages */
+                    margin-bottom: 20px !important;
+                }
+
+                /* FORCE BACKGROUND COLORS (Important for Stop Boxes) */
+                * {
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
+                }
+                
+                /* HEADER & TYPOGRAPHY */
+                h1 { font-size: 24pt !important; margin-bottom: 0 !important; }
+                h2 { font-size: 18pt !important; border-bottom: 2px solid #333; padding-bottom: 5px; margin-top: 20px; }
+                h3, h4 { font-size: 14pt !important; }
+                p, div { font-size: 11pt !important; line-height: 1.4; }
+            }
         </style>
     """, unsafe_allow_html=True)
-    st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
+    
+    # Auto-trigger print dialog
+    st.markdown("<script>setTimeout(function() { window.print(); }, 1000);</script>", unsafe_allow_html=True)
 
 # ----------------------- Sidebar: Auth & Tools -----------------------
 with st.sidebar:
