@@ -750,7 +750,7 @@ if ss["pending_preview"]:
                     leg_note = st.text_input("Note spostamento", value="")
 
             # --- ROW 3: Checkbox (Full width or Left) ---
-            overnight = st.checkbox("Notte (Stop Notturno)", value=True)
+            overnight = st.checkbox("Pernottamento Notturno", value=True)
 
             st.write("") # Spacer
             if st.form_submit_button("Aggiungi Tappa", type="primary", use_container_width=True):
