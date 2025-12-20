@@ -626,110 +626,108 @@ ss = st.session_state
 
 # ----------------------- CSS for Printing -----------------------
 if ss.get("print_mode"):
+    # 1. Add a Manual Print Button at the top of the main area (in case auto-trigger fails)
+    c_print, c_back = st.columns([1, 10])
+    with c_print:
+        # This uses a hack to trigger print via a button if the auto-script fails
+        st.markdown(f"""
+            <button onclick="window.print()" style="
+                background-color: #333; color: white; border: none; padding: 10px 20px; 
+                cursor: pointer; font-weight: bold; border-radius: 4px;">
+                🖨️ STAMPA
+            </button>
+        """, unsafe_allow_html=True)
+    with c_back:
+        if st.button("🔙 Torna alla modifica"):
+            ss["print_mode"] = False
+            st.rerun()
+
+    # 2. THE CSS
     st.markdown("""
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
             
-            @media print {
-                @page { 
-                    margin: 0.8cm; 
-                    size: A4; 
-                }
-                
-                html, body, [data-testid="stAppViewContainer"] {
-                    font-family: 'Roboto', sans-serif !important;
-                    background-color: white !important;
-                    color: #000 !important;
-                    font-size: 10pt !important; /* Base font smaller */
-                }
+            /* --- GLOBAL STYLES (Apply to Screen AND Print) --- */
+            /* This ensures you see the 'Preview' exactly as it will print */
+            
+            /* Typography & Base */
+            html, body, [data-testid="stAppViewContainer"] {
+                font-family: 'Roboto', sans-serif !important;
+                color: #000 !important;
+            }
+            
+            /* Map: Grayscale & Compact */
+            iframe { 
+                filter: grayscale(100%) contrast(1.1);
+                border: 2px solid #000 !important; 
+                border-radius: 0 !important; 
+            }
 
-                /* HIDE UI ELEMENTS */
-                [data-testid="stSidebar"], [data-testid="stHeader"], .stDeployButton, footer, button, .stButton {
+            /* Headers */
+            h1 { text-transform: uppercase; border-bottom: 3px solid black; }
+            h4 {
+                background: #eee !important;
+                padding: 4px 8px !important;
+                border-left: 4px solid black !important;
+                color: black !important;
+                margin-top: 10px !important;
+            }
+
+            /* Stop Boxes: Square & Compact */
+            div[style*="border-radius:12px"] {
+                border-radius: 0 !important;
+                border: 1px solid #aaa !important;
+                background-color: #fff !important;
+                box-shadow: none !important;
+                margin: 2px 0 !important;
+                padding: 4px 6px !important;
+            }
+
+            /* Overnight Stops */
+            div[style*="background:#e8f0ff"] {
+                background-color: #f0f0f0 !important;
+                border: 1px solid #333 !important;
+                border-left: 5px solid #333 !important;
+            }
+
+            /* Regular Stops */
+            div[style*="background:#ffffff"] {
+                border-left: 1px solid #ccc !important;
+            }
+
+            /* Remove Streamlit Gaps */
+            .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; }
+            div[data-testid="stVerticalBlock"] { gap: 0 !important; }
+            
+            /* --- PRINT ONLY OVERRIDES (Hide UI) --- */
+            @media print {
+                @page { margin: 0.8cm; size: A4; }
+                
+                /* Hide Buttons & Sidebar */
+                [data-testid="stSidebar"], 
+                [data-testid="stHeader"], 
+                .stDeployButton, 
+                footer, 
+                button, 
+                .stButton {
                     display: none !important; 
                 }
-
-                /* RESET LAYOUT - Remove all Streamlit gaps */
+                
+                /* Maximize Width */
                 .block-container {
                     padding: 0 !important;
                     max-width: 100% !important;
-                    gap: 0 !important;
-                }
-                div[data-testid="stVerticalBlock"] {
-                    gap: 0 !important;
                 }
                 
-                /* MAP STYLING: Smaller & Compact */
-                iframe { 
-                    height: 350px !important; /* Reduced height */
-                    width: 100% !important; 
-                    border: 2px solid #000 !important; 
-                    border-radius: 0 !important; 
-                    filter: grayscale(100%) contrast(1.1);
-                    margin-bottom: 15px !important;
-                }
-
-                /* MAIN TITLE */
-                h1 { 
-                    font-size: 20pt !important; 
-                    text-transform: uppercase; 
-                    border-bottom: 3px solid black;
-                    margin-bottom: 5px !important;
-                    padding-bottom: 0 !important;
-                }
-
-                /* DAY HEADERS */
-                h4 {
-                    font-size: 11pt !important;
-                    font-weight: 700 !important;
-                    background: #eee !important;
-                    padding: 4px 8px !important; /* Tighter padding */
-                    border-left: 4px solid black !important;
-                    margin-top: 10px !important;
-                    margin-bottom: 4px !important;
-                    color: black !important;
-                    page-break-after: avoid;
-                }
-
-                /* STOP BOXES - COMPACT */
-                div[style*="border-radius:12px"] {
-                    border-radius: 0 !important;
-                    border: 1px solid #aaa !important;
-                    background-color: #fff !important;
-                    box-shadow: none !important;
-                    margin: 2px 0 !important; /* Very small margin */
-                    padding: 4px 6px !important; /* Tighter padding inside */
-                    font-size: 10pt !important;
-                    page-break-inside: avoid;
-                }
-
-                /* OVERNIGHT STOPS */
-                div[style*="background:#e8f0ff"] {
-                    background-color: #f0f0f0 !important;
-                    border: 1px solid #333 !important;
-                    border-left: 5px solid #333 !important;
-                }
+                iframe { height: 350px !important; margin-bottom: 10px !important; }
                 
-                /* REGULAR STOPS */
-                div[style*="background:#ffffff"] {
-                    border-left: 1px solid #ccc !important;
-                }
-                
-                /* NOTES & TEXT */
-                p, em, strong, div { 
-                    color: black !important; 
-                    line-height: 1.2 !important; /* Tighter lines */
-                }
-                
-                /* HIDE LEGS IF EMPTY or too small */
-                div[data-testid="caption"] {
-                    font-size: 9pt !important;
-                    margin-bottom: 2px !important;
-                    color: #444 !important;
-                }
+                /* Hide the manual buttons we added above */
+                button[onclick="window.print()"] { display: none !important; }
             }
         </style>
     """, unsafe_allow_html=True)
     
+    # 3. Auto-trigger print
     st.markdown("<script>setTimeout(function() { window.print(); }, 800);</script>", unsafe_allow_html=True)
 # ----------------------- Sidebar: Auth & Tools -----------------------
 with st.sidebar:
