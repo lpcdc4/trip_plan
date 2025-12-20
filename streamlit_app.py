@@ -913,13 +913,13 @@ else:
             if leg: modes.add(leg.get("mode", "car").lower())
         
         # ----------------------------------------------------------------------
-        # UPDATED HEADER TIME LOGIC (Concatenates modes)
+        # ICONS IN HEADERS (Replaces words with Emojis)
         # ----------------------------------------------------------------------
         time_parts = []
         
-        # 1. Calculate total drive time
+        # 1. Driving -> 🚗
         if b["drive_seconds"] > 0:
-            time_parts.append(f"Guida ({hhmm_from_seconds(b['drive_seconds'])})")
+            time_parts.append(f"🚗 {hhmm_from_seconds(b['drive_seconds'])}")
             
         # 2. Check for other specific modes
         modes = set()
@@ -927,20 +927,19 @@ else:
             if leg: modes.add(leg.get("mode", "car").lower())
 
         if "plane" in modes or "aereo" in modes:
-            time_parts.append("Volo")
+            time_parts.append("✈️") 
         if "train" in modes or "treno" in modes:
-            time_parts.append("Treno")
+            time_parts.append("🚆") 
         if "bus" in modes:
-            time_parts.append("Bus")
+            time_parts.append("🚌")
         if "ferry" in modes or "traghetto" in modes:
-            time_parts.append("Traghetto")
+            time_parts.append("⛴️")
             
-        # Fallback if we have legs but no specific parts added (e.g. unknown mode)
+        # Fallback if we have legs but no specific parts added
         if not time_parts and len(b["legs"]) > 0:
-            time_parts.append("Viaggio")
+            time_parts.append("🏃")
             
         time_str = " + ".join(time_parts)
-        # ----------------------------------------------------------------------
             
         header = ""
         if is_stay_day or b["start"] == b["end"]:
