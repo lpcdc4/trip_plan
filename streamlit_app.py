@@ -847,11 +847,15 @@ st.markdown("## Itinerario")
 
 # Drag & drop (Keep this bit)
 if ss["stops"]:
+    # ... inside the "if ss['stops']:" block ...
+
     with st.expander("Riordina tappe (trascina e rilascia)", expanded=False):
         if not HAS_SORTABLES:
             st.error("Drag & drop requires: pip install streamlit-sortables")
         else:
-            base_items = [f"{s['id']} | {s['name']}" for s in ss["stops"]]
+            # CHANGED: Display "1. Name" instead of "S1 | Name"
+            base_items = [f"{i+1}. {s['name']}" for i, s in enumerate(ss["stops"])]
+            
             if ss.get("sortable_items_cache") is None or len(ss["sortable_items_cache"]) != len(base_items):
                 ss["sortable_items_cache"] = base_items
 
@@ -862,23 +866,38 @@ if ss["stops"]:
             )
             ss["sortable_items_cache"] = list(new_items)
 
-            new_order_ids = []
-            for it in new_items:
-                it = str(it)
-                if " | " in it:
-                    sid = it.split(" | ", 1)[0].strip()
-                else:
-                    m = re.match(r"^(S\d+)", it.strip())
-                    sid = m.group(1) if m else it.strip()
-                new_order_ids.append(sid)
-
-            current_ids = [s["id"] for s in ss["stops"]]
-            if new_order_ids and new_order_ids != current_ids:
-                apply_stop_reorder(new_order_ids)
-                renumber_stops_and_update()
-                ss["sortable_items_cache"] = None
-                st.success("Ordine aggiornato.")
-                st.rerun()
+            # Check if order changed
+            if new_items != base_items:
+                # Logic to reconstruct order based on names
+                # We create a pool of available stops and pick them as they appear in the new list
+                
+                # 1. Create a map of Name -> List of Stop Objects (to handle duplicates)
+                name_map = {}
+                for s in ss["stops"]:
+                    name_map.setdefault(s["name"], []).append(s)
+                
+                # 2. Rebuild new ID order
+                new_order_ids = []
+                for item in new_items:
+                    # Parse name from "1. Name"
+                    if ". " in str(item):
+                        name_only = str(item).split(". ", 1)[1]
+                    else:
+                        name_only = str(item)
+                    
+                    # Pop the next available stop with this name
+                    if name_only in name_map and name_map[name_only]:
+                        stop_obj = name_map[name_only].pop(0)
+                        new_order_ids.append(stop_obj["id"])
+                
+                # Apply
+                current_ids = [s["id"] for s in ss["stops"]]
+                if new_order_ids and new_order_ids != current_ids:
+                    apply_stop_reorder(new_order_ids)
+                    renumber_stops_and_update()
+                    ss["sortable_items_cache"] = None
+                    st.success("Ordine aggiornato.")
+                    st.rerun()
 
 if not ss["stops"]:
     st.info("Nessuna tappa. Aggiungine una cercando qui sopra.")
