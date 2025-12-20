@@ -698,80 +698,83 @@ selection = None
 if selected_label:
     selection = ss.get("search_lookup", {}).get(selected_label)
 
-# 1. Preview Stage
+# 1. Update Preview if selection changes
 if selection and selected_label != ss["last_selected_label"]:
     ss["last_selected_label"] = selected_label
     ss["pending_preview"] = {"name": selection["name"], "lat": selection["lat"], "lon": selection["lon"]}
     ss["map_center"] = (selection["lat"], selection["lon"])
-    mark_dirty()
+    # Note: We don't mark dirty here to avoid reloading map just for preview
 
-if selection:
+# 2. Unified Add Form
+if ss["pending_preview"]:
+    p = ss["pending_preview"]
     with st.container(border=True):
-        st.write(f"**Selected:** {selection['name']}")
-        cA, cB, cC = st.columns([1, 1, 2])
-        with cA:
-            overnight = st.checkbox("Overnight", value=True, key="add_stop_overnight")
-        with cB:
-            stop_note = st.text_input("Stop note (optional)", value="", key="add_stop_note")
-        with cC:
-            name_override = st.text_input("Name override (optional)", value="", key="add_stop_name_override")
+        st.markdown(f"**Selezionato:** {p['name']}")
+        
+        # Determine if we need travel details (Is this the first stop?)
+        is_first = (len(ss["stops"]) == 0)
+        
+        # Smart Logic: Are we staying in the same place?
+        is_same_place = False
+        if not is_first:
+            last = ss["stops"][-1]
+            # Check if names match (Simple check)
+            if last["name"] == p["name"]:
+                is_same_place = True
+        
+        # Create Form
+        with st.form("add_stop_form"):
+            c_stop, c_leg = st.columns([1, 1])
+            
+            # Left Side: Stop Details
+            with c_stop:
+                st.caption("Dettagli Tappa")
+                ov_val = True
+                
+                overnight = st.checkbox("Notte", value=ov_val)
+                name_override = st.text_input("Nome (opzionale)", value="")
+                stop_note = st.text_input("Note tappa", value="")
+                
+            # Right Side: Travel Details (Hidden if same place!)
+            mode = "Auto" # Default
+            leg_note = ""
+            
+            with c_leg:
+                if is_first:
+                    st.caption("Punto di partenza")
+                    st.info("Nessuno spostamento")
+                elif is_same_place:
+                    st.caption("Stesso luogo")
+                    st.info("Nessuno spostamento")
+                else:
+                    st.caption(f"Spostamento da {ss['stops'][-1]['name']}")
+                    # Italian options
+                    mode = st.selectbox("Mezzo", ["Auto", "Treno", "Aereo", "Bus", "Altro"], index=0)
+                    leg_note = st.text_input("Note spostamento", value="")
 
-        if st.button("Use this as next stop", use_container_width=True):
-            ss["pending_stop"] = {
-                "name": (name_override.strip() or selection["name"]),
-                "lat": float(selection["lat"]),
-                "lon": float(selection["lon"]),
-                "overnight": bool(overnight),
-                "note": stop_note.strip(),
-            }
-            st.rerun()
-
-# 2. Confirm Stage
-if ss["pending_stop"] is not None:
-    p = ss["pending_stop"]
-    is_first = (len(ss["stops"]) == 0)
-
-    with st.container(border=True):
-        st.markdown("### Confirm add")
-        st.write(f"**Next stop:** {p['name']}")
-
-        if is_first:
-            st.caption("First stop (no incoming leg).")
-            if st.button("Add first stop", type="primary", use_container_width=True):
-                add_stop_internal(p["name"], p["lat"], p["lon"], p["overnight"], p["note"])
-                ss["pending_stop"] = None
-                ss["pending_preview"] = None
-                ss["search_key_version"] += 1
-                ss["last_selected_label"] = None
-                mark_dirty()
-                st.rerun()
-        else:
-            st.write(f"**From:** {ss['stops'][-1]['name']}")
-            with st.form("transport_form", clear_on_submit=False):
-                c1, c2 = st.columns([1, 2])
-                with c1:
-                    mode = st.selectbox("Mode", ["car", "bus", "train", "plane", "—"], index=0)
-                with c2:
-                    leg_note = st.text_input("Leg note (optional)", value="")
-                submit = st.form_submit_button("Add stop + leg", type="primary", use_container_width=True)
-
-            if submit:
-                add_stop_internal(p["name"], p["lat"], p["lon"], p["overnight"], p["note"])
-                ensure_legs_alignment()
-                prev_idx = len(ss["stops"]) - 2
-                try:
-                    if mode != "—":
-                        set_leg_between(prev_idx, mode, leg_note)
-                    else:
+            st.write("") # Spacer
+            if st.form_submit_button("Aggiungi Tappa", type="primary", use_container_width=True):
+                # Add the stop
+                final_name = name_override.strip() if name_override.strip() else p["name"]
+                add_stop_internal(final_name, p["lat"], p["lon"], overnight, stop_note)
+                
+                # Handle Leg
+                if not is_first:
+                    prev_idx = len(ss["stops"]) - 2
+                    if is_same_place:
+                        # Logic: Same place = No leg (None)
                         ss["legs_between"][prev_idx] = None
                         mark_dirty()
-                except Exception as e:
-                    st.error(f"Routing failed: {e}")
-
-                ss["pending_stop"] = None
+                    else:
+                        # Map Italian UI back to internal English keys
+                        m_map = {"Auto": "car", "Treno": "train", "Aereo": "plane", "Bus": "bus", "Altro": "car"}
+                        internal_mode = m_map.get(mode, "car")
+                        set_leg_between(prev_idx, internal_mode, leg_note)
+                
+                # Reset
                 ss["pending_preview"] = None
-                ss["search_key_version"] += 1
                 ss["last_selected_label"] = None
+                ss["search_key_version"] += 1
                 st.rerun()
 
 st.divider()
