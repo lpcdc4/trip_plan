@@ -344,15 +344,38 @@ def driving_seconds_for_leg(leg: Optional[Dict]) -> int:
     return 0
 
 
+#def leg_summary(leg: Optional[Dict]) -> str:
+#    if not leg:
+#        return "—"
+#    mode = (leg.get("mode") or "—").upper()
+#    if mode in {"CAR", "BUS", "TRAIN"} and leg.get("distance_m") is not None and leg.get("duration_s") is not None:
+#        km = leg["distance_m"] / 1000.0
+#        hhmm = hhmm_from_seconds(leg["duration_s"])
+#        return f"{mode} · {km:.1f} km · {hhmm}"
+#    return mode
+
+
 def leg_summary(leg: Optional[Dict]) -> str:
     if not leg:
         return "—"
-    mode = (leg.get("mode") or "—").upper()
-    if mode in {"CAR", "BUS", "TRAIN"} and leg.get("distance_m") is not None and leg.get("duration_s") is not None:
+    
+    # Capitalize and translate mode
+    mode_raw = (leg.get("mode") or "—").lower()
+    mode_map = {
+        "car": "Auto",
+        "bus": "Bus",
+        "train": "Treno",
+        "plane": "Aereo",
+        "ferry": "Traghetto"
+    }
+    display_mode = mode_map.get(mode_raw, mode_raw.title())
+    
+    if mode_raw in {"car", "bus", "train", "auto"} and leg.get("distance_m") is not None and leg.get("duration_s") is not None:
         km = leg["distance_m"] / 1000.0
         hhmm = hhmm_from_seconds(leg["duration_s"])
-        return f"{mode} · {km:.1f} km · {hhmm}"
-    return mode
+        return f"{display_mode} · {km:.1f} km · {hhmm}"
+    
+    return display_mode
 
 
 # ----------------------- Overnight-as-night blocks -----------------------
