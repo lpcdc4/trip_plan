@@ -1,9 +1,9 @@
 # streamlit_app.py
 #
-# Streamlit itinerary planner (Photon + OSRM) + Supabase Sync + PIN Protection (Edit Only)
+# Streamlit itinerary planner (Photon + OSRM) + Supabase Sync + PIN Protection
 #
 # Install:
-#   pip install streamlit folium streamlit-folium requests polyline streamlit-searchbox streamlit-sortables supabase
+#   pip install streamlit folium streamlit-folium requests polyline streamlit-searchbox streamlit-sortables supabase fpdf2
 #
 # Run:
 #   streamlit run streamlit_app.py
@@ -12,18 +12,18 @@ import hmac
 import uuid
 import re
 import json
+import io
 from datetime import date, timedelta, datetime
 from typing import Dict, List, Optional, Tuple
 
 import requests
 import streamlit as st
-from fpdf import FPDF
-import io
 import folium
 from streamlit_folium import st_folium
 import polyline as polyline_lib
 from streamlit_searchbox import st_searchbox
 from supabase import create_client, Client
+from fpdf import FPDF
 
 # ---------- optional drag & drop dependency ----------
 HAS_SORTABLES = False
@@ -152,7 +152,6 @@ def set_defaults():
     ss.setdefault("show_editor", False)
     ss.setdefault("editing_stop_idx", None)
     ss.setdefault("can_edit", False) # Default to Read Only
-    ss.setdefault("print_mode", False) # Default to Normal View
 
 def populate_state_from_data(data: dict):
     ss = st.session_state
@@ -620,18 +619,13 @@ def stop_row_html(s: Dict) -> str:
     </div>
     """
 
-
-# ======================= APP =======================
-init_state()
-ensure_legs_alignment()
-ss = st.session_state
-
-
 # ----------------------- PDF Generator -----------------------
 class TripPDF(FPDF):
     def header(self):
         self.set_font("Helvetica", "B", 12)
-        self.cell(0, 10, st.session_state["trip_name"], border=False, align="R")
+        # Use safe get() for trip_name in case init is slow
+        name = st.session_state.get("trip_name", "Viaggio")
+        self.cell(0, 10, name, border=False, align="R")
         self.ln(15)
 
     def footer(self):
@@ -646,7 +640,12 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
     
     # 1. TITLE
     pdf.set_font("Helvetica", "B", 24)
-    pdf.cell(0, 15, trip_name.upper(), ln=True, align="L")
+    # Ensure latin-1 compatible text if possible, fpdf standard is strict with unicode
+    # We replace common unmapped chars just in case, or use a font that supports them if added.
+    # Standard FPDF only supports Latin-1. For full unicode, consider fpdf2 with a TTF font.
+    # Here we stick to basic ascii/latin-1 for safety.
+    safe_name = trip_name.encode('latin-1', 'replace').decode('latin-1')
+    pdf.cell(0, 15, safe_name.upper(), ln=True, align="L")
     
     pdf.set_font("Helvetica", "", 12)
     pdf.cell(0, 10, f"Inizio viaggio: {start_date.strftime('%d/%m/%Y')}", ln=True)
@@ -662,8 +661,6 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
         pdf.set_font("Helvetica", "B", 12)
         
         # Calculate Header Text
-        start_stop = stops[b["start"]]
-        end_stop = stops[b["end"]]
         date_str = b["date"].strftime("%d/%m/%y")
         
         # Travel Mode text
@@ -681,8 +678,9 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
         mid_part = f"   |   {' + '.join(time_parts)}" if time_parts else ""
         
         header_text = f"GIORNO {b['day']}  -  {date_str}{mid_part}"
+        safe_header = header_text.encode('latin-1', 'replace').decode('latin-1')
         
-        pdf.cell(0, 10, header_text, ln=True, fill=True, border=False)
+        pdf.cell(0, 10, safe_header, ln=True, fill=True, border=False)
         pdf.ln(2)
         
         # --- STOPS ---
@@ -703,8 +701,8 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
                 pdf.set_line_width(0.2)
                 
             # Content
-            name = s['name']
-            note = s.get('note', '').strip()
+            name = s['name'].encode('latin-1', 'replace').decode('latin-1')
+            note = s.get('note', '').strip().encode('latin-1', 'replace').decode('latin-1')
             
             # Height calc
             h = 8
@@ -735,15 +733,23 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
                 if leg:
                     summ = leg_summary(leg)
                     lnote = f" ({leg['note']})" if leg.get("note") else ""
+                    full_leg = f"   |   {summ}{lnote}".encode('latin-1', 'replace').decode('latin-1')
+                    
                     pdf.set_font("Helvetica", "", 8)
                     pdf.set_text_color(100, 100, 100)
-                    pdf.cell(0, 5, f"   |   {summ}{lnote}", ln=True)
+                    pdf.cell(0, 5, full_leg, ln=True)
                     pdf.set_text_color(0, 0, 0)
                     pdf.ln(1)
                     
         pdf.ln(5) # Space between days
 
     return bytes(pdf.output())
+
+
+# ======================= APP =======================
+init_state()
+ensure_legs_alignment()
+ss = st.session_state
 
 # ----------------------- Sidebar: Auth & Tools -----------------------
 with st.sidebar:
@@ -769,13 +775,20 @@ with st.sidebar:
 
     st.divider()
 
-  # 2. PRINT VIEW TOGGLE
-    # We use .get("print_mode", False) to avoid the KeyError
-    current_print_mode = ss.get("print_mode", False)
-    
-    if st.button("🖨️ Vista Stampa (PDF)" if not current_print_mode else "🔙 Vista Normale"):
-        ss["print_mode"] = not current_print_mode
-        st.rerun()
+    # 2. PDF DOWNLOAD (Replaces Print Toggle)
+    if ss["stops"]:
+        pdf_data = generate_pdf_bytes(
+            ss["trip_name"], 
+            ss["trip_start_date"], 
+            ss["stops"], 
+            ss["legs_between"]
+        )
+        st.download_button(
+            label="📄 Scarica PDF (Grayscale)",
+            data=pdf_data,
+            file_name=f"{ss['trip_name'].replace(' ', '_')}.pdf",
+            mime="application/pdf"
+        )
     
     # 3. EDIT TOOLS (Only if can_edit)
     if ss.get("can_edit"):
@@ -825,13 +838,8 @@ with st.sidebar:
 
 
 # ----------------------- Main Header -----------------------
-# If printing, just show a clean Title
-if ss.get("print_mode"):
-    st.title(f"{ss['trip_name']}")
-    st.write(f"Inizio: {fmt_date(ss['trip_start_date'])}")
-
 # If Editing, show Inputs
-elif ss.get("can_edit"):
+if ss.get("can_edit"):
     c1, c2, c3 = st.columns([3, 2, 2])
     with c1:
         new_name = st.text_input("Nome viaggio", ss["trip_name"])
@@ -853,7 +861,7 @@ else:
 
 
 # ----------------------- Search / Add Stop (Edit Only) -----------------------
-if ss.get("can_edit") and not ss.get("print_mode"):
+if ss.get("can_edit"):
     st.markdown("### Aggiungi tappa")
     selected_label = st_searchbox(
         search_api_labels,
@@ -945,11 +953,10 @@ st.divider()
 # ------------------------------------------------------------------------------
 # ITINERARY SECTION
 # ------------------------------------------------------------------------------
-if not ss.get("print_mode"):
-    st.markdown("## Itinerario")
+st.markdown("## Itinerario")
 
-# Drag & Drop: Only if Editing AND not printing
-if ss["stops"] and ss.get("can_edit") and not ss.get("print_mode"):
+# Drag & Drop: Only if Editing
+if ss["stops"] and ss.get("can_edit"):
     with st.expander("Riordina tappe (trascina e rilascia)", expanded=False):
         if not HAS_SORTABLES:
             st.error("Drag & drop requires: pip install streamlit-sortables")
@@ -1035,14 +1042,7 @@ else:
              mid_part = f" · {time_str}" if time_str else ""
              header = f"Giorno {b['day']} ({date_str}){mid_part} · {start_stop['name']} ➝ {end_stop['name']}"
 
-        # --- VIEW LOGIC: EXPANDER vs CONTAINER (For Print) ---
-        if ss.get("print_mode"):
-            block_container = st.container()
-            block_container.markdown(f"#### {header}")
-        else:
-            block_container = st.expander(header, expanded=False)
-
-        with block_container:
+        with st.expander(header, expanded=False):
             for i in range(b["start"], b["end"] + 1):
                 s = ss["stops"][i]
                 k_sfx = f"{i}_{b_idx}"
@@ -1126,8 +1126,8 @@ else:
 
                 else:
                     # --- NORMAL VIEW ---
-                    # Only show Pencil if Can Edit AND Not Printing
-                    if ss.get("can_edit") and not ss.get("print_mode"):
+                    # Only show Pencil if Can Edit
+                    if ss.get("can_edit"):
                         c_disp, c_btn = st.columns([12, 1])
                         with c_disp:
                             st.markdown(stop_row_html(s), unsafe_allow_html=True)
