@@ -829,7 +829,7 @@ if ss["stops"]:
 
 if not ss["stops"]:
     st.info("Nessuna tappa. Aggiungine una cercando qui sopra.")
-else:
+elif not ss["show_editor"]:
     blocks = itinerary_day_blocks(ss["stops"], ss["legs_between"])
     for b in blocks:
         start_stop = ss["stops"][b["start"]]
