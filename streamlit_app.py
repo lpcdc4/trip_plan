@@ -828,7 +828,10 @@ if not ss["stops"]:
 else:
     blocks = itinerary_day_blocks(ss["stops"], ss["legs_between"])
     
-    for b in blocks:
+    # --------------------------------------------------------------------------
+    # FIXED LOOP: Uses enumerate(blocks) to generate unique keys for duplicate stops
+    # --------------------------------------------------------------------------
+    for b_idx, b in enumerate(blocks):
         start_stop = ss["stops"][b["start"]]
         end_stop = ss["stops"][b["end"]]
         date_str = fmt_date(b["date"])
@@ -872,6 +875,10 @@ else:
             for i in range(b["start"], b["end"] + 1):
                 s = ss["stops"][i]
                 
+                # UNIQUE KEY SUFFIX: Combination of Stop Index + Block Index
+                # This prevents crashes when a stop appears in multiple blocks (overnight)
+                k_sfx = f"{i}_{b_idx}"
+
                 # --- CHECK IF EDITING THIS STOP ---
                 if ss.get("editing_stop_idx") == i:
                     with st.container(border=True):
@@ -880,11 +887,11 @@ else:
                         # 1. STOP DETAILS
                         c_edit_1, c_edit_2 = st.columns([3, 2])
                         with c_edit_1:
-                            new_name_edit = st.text_input("Nome", s['name'], key=f"edit_name_{i}")
-                            new_note_edit = st.text_input("Note", s.get("note", ""), key=f"edit_note_{i}")
+                            new_name_edit = st.text_input("Nome", s['name'], key=f"edit_name_{k_sfx}")
+                            new_note_edit = st.text_input("Note", s.get("note", ""), key=f"edit_note_{k_sfx}")
                         with c_edit_2:
-                            new_ov_edit = st.checkbox("Pernottamento", s.get("overnight", False), key=f"edit_ov_{i}")
-                            if st.button("🗑 Elimina Tappa", key=f"del_btn_{i}"):
+                            new_ov_edit = st.checkbox("Pernottamento", s.get("overnight", False), key=f"edit_ov_{k_sfx}")
+                            if st.button("🗑 Elimina Tappa", key=f"del_btn_{k_sfx}"):
                                 old_stops = list(ss["stops"])
                                 old_legs = list(ss["legs_between"])
                                 ss["stops"] = [x for j, x in enumerate(ss["stops"]) if j != i]
@@ -896,7 +903,6 @@ else:
                                 st.rerun()
 
                         # 2. LEG DETAILS (Leaving this stop)
-                        # We allow editing the leg even if it's visually in the next day block
                         new_mode_edit = None
                         new_leg_note_edit = ""
                         
@@ -912,22 +918,22 @@ else:
                             with cl1:
                                 def fmt_mode(m):
                                     return {"car": "Auto", "bus": "Bus", "train": "Treno", "plane": "Aereo", "ferry": "Traghetto", "—": "—"}.get(m, m)
-                                new_mode_edit = st.selectbox("Mezzo", ["—", "car", "bus", "train", "plane"], index=["—", "car", "bus", "train", "plane"].index(cur_mode) if cur_mode in ["—", "car", "bus", "train", "plane"] else 0, format_func=fmt_mode, key=f"edit_mode_{i}")
+                                new_mode_edit = st.selectbox("Mezzo", ["—", "car", "bus", "train", "plane"], index=["—", "car", "bus", "train", "plane"].index(cur_mode) if cur_mode in ["—", "car", "bus", "train", "plane"] else 0, format_func=fmt_mode, key=f"edit_mode_{k_sfx}")
                             with cl2:
-                                new_leg_note_edit = st.text_input("Note Spostamento", cur_leg_note, key=f"edit_leg_note_{i}")
+                                new_leg_note_edit = st.text_input("Note Spostamento", cur_leg_note, key=f"edit_leg_note_{k_sfx}")
 
                         st.write("")
-                        if st.button("💾 Salva Modifiche", key=f"save_{i}", type="primary"):
+                        if st.button("💾 Salva Modifiche", key=f"save_{k_sfx}", type="primary"):
                             # Update Stop
                             ss["stops"][i]["name"] = new_name_edit
                             ss["stops"][i]["note"] = new_note_edit
                             ss["stops"][i]["overnight"] = new_ov_edit
                             
-                            # Update Leg (with Route Calculation)
+                            # Update Leg
                             if has_leg:
                                 leg_changed = False
                                 if not ss["legs_between"][i]:
-                                    leg_changed = True # was None
+                                    leg_changed = True 
                                 elif ss["legs_between"][i].get("mode") != new_mode_edit:
                                     leg_changed = True
                                 
@@ -958,17 +964,17 @@ else:
 
                 else:
                     # --- NORMAL VIEW ---
-                    # Use columns to put the pencil icon on the right
                     c_disp, c_btn = st.columns([12, 1])
                     with c_disp:
                         st.markdown(stop_row_html(s), unsafe_allow_html=True)
                     with c_btn:
-                        st.write("") # small spacer
-                        if st.button("✏️", key=f"edit_open_{i}", help="Modifica tappa"):
+                        st.write("") 
+                        # Use the Unique Key Suffix here too
+                        if st.button("✏️", key=f"edit_open_{k_sfx}", help="Modifica tappa"):
                             ss["editing_stop_idx"] = i
                             st.rerun()
 
-                    # Show Leg Summary (only if not hidden by logic)
+                    # Show Leg Summary
                     if i < b["end"]:
                          if is_stay_day: continue
                          leg = ss["legs_between"][i]
