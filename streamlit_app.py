@@ -619,56 +619,69 @@ def stop_row_html(s: Dict) -> str:
     </div>
     """
 
-# ----------------------- PDF Generator -----------------------
+# ----------------------- PDF Generator (Fixed Layout) -----------------------
 class TripPDF(FPDF):
     def header(self):
-        self.set_font("Helvetica", "B", 12)
-        # Use safe get() for trip_name in case init is slow
-        name = st.session_state.get("trip_name", "Viaggio")
-        self.cell(0, 10, name, border=False, align="R")
-        self.ln(15)
+        # Only show header on pages after the first one
+        if self.page_no() > 1:
+            self.set_font("Helvetica", "I", 8)
+            self.set_text_color(128, 128, 128)
+            name = st.session_state.get("trip_name", "Viaggio")
+            # Safe encode
+            safe_name = name.encode('latin-1', 'replace').decode('latin-1')
+            self.cell(0, 10, safe_name, border=False, align="R")
+            self.ln(10)
 
     def footer(self):
+        # Position at 1.5 cm from bottom
         self.set_y(-15)
         self.set_font("Helvetica", "I", 8)
+        self.set_text_color(128, 128, 128)
         self.cell(0, 10, f"Pagina {self.page_no()}/{{nb}}", align="C")
 
 def generate_pdf_bytes(trip_name, start_date, stops, legs):
     pdf = TripPDF()
+    pdf.alias_nb_pages()
     pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
+    # Increased margin to 25mm to prevent footer overlap
+    pdf.set_auto_page_break(auto=True, margin=25) 
     
-    # 1. TITLE
+    # 1. TITLE PAGE HEADER
     pdf.set_font("Helvetica", "B", 24)
-    # Ensure latin-1 compatible text if possible, fpdf standard is strict with unicode
-    # We replace common unmapped chars just in case, or use a font that supports them if added.
-    # Standard FPDF only supports Latin-1. For full unicode, consider fpdf2 with a TTF font.
-    # Here we stick to basic ascii/latin-1 for safety.
     safe_name = trip_name.encode('latin-1', 'replace').decode('latin-1')
-    pdf.cell(0, 15, safe_name.upper(), ln=True, align="L")
+    pdf.cell(0, 10, safe_name.upper(), ln=True, align="L")
     
     pdf.set_font("Helvetica", "", 12)
+    pdf.set_text_color(50, 50, 50)
     pdf.cell(0, 10, f"Inizio viaggio: {start_date.strftime('%d/%m/%Y')}", ln=True)
-    pdf.ln(5)
+    pdf.ln(10)
     
     # 2. GENERATE BLOCKS
-    # We reuse the existing logic to group days
     blocks = itinerary_day_blocks(stops, legs)
     
     for b in blocks:
+        # --- SMART PAGE BREAK CHECK (Day Header) ---
+        # A day header needs about 15mm. If we are near the bottom (e.g. > 250mm), 
+        # push to next page to keep header with content.
+        if pdf.get_y() > 250: 
+            pdf.add_page()
+
         # --- DAY HEADER ---
-        pdf.set_fill_color(230, 230, 230) # Light Grey
+        pdf.set_fill_color(240, 240, 240) # Light Grey
         pdf.set_font("Helvetica", "B", 12)
+        pdf.set_text_color(0, 0, 0)
         
         # Calculate Header Text
         date_str = b["date"].strftime("%d/%m/%y")
         
-        # Travel Mode text
         time_parts = []
-        if b["drive_seconds"] > 0: time_parts.append(f"Guida ({hhmm_from_seconds(b['drive_seconds'])})")
+        if b["drive_seconds"] > 0: 
+            time_parts.append(f"Guida ({hhmm_from_seconds(b['drive_seconds'])})")
+        
         modes = set()
         for li, leg in b["legs"]:
              if leg: modes.add(leg.get("mode", "car").lower())
+        
         if "plane" in modes or "aereo" in modes: time_parts.append("Volo")
         if "train" in modes or "treno" in modes: time_parts.append("Treno")
         if "bus" in modes: time_parts.append("Bus")
@@ -676,72 +689,85 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
         if not time_parts and len(b["legs"]) > 0: time_parts.append("Viaggio")
         
         mid_part = f"   |   {' + '.join(time_parts)}" if time_parts else ""
-        
         header_text = f"GIORNO {b['day']}  -  {date_str}{mid_part}"
+        
+        # Safe encode
         safe_header = header_text.encode('latin-1', 'replace').decode('latin-1')
         
         pdf.cell(0, 10, safe_header, ln=True, fill=True, border=False)
         pdf.ln(2)
         
-        # --- STOPS ---
+        # --- STOPS LOOP ---
         pdf.set_font("Helvetica", "", 11)
         
         for i in range(b["start"], b["end"] + 1):
             s = stops[i]
             is_overnight = s.get("overnight", False)
             
-            # Box Style
-            if is_overnight:
-                pdf.set_fill_color(245, 245, 245) # Very light grey
-                pdf.set_draw_color(50, 50, 50)    # Dark Grey Border
-                pdf.set_line_width(0.5)
-            else:
-                pdf.set_fill_color(255, 255, 255) # White
-                pdf.set_draw_color(150, 150, 150) # Light Border
-                pdf.set_line_width(0.2)
-                
-            # Content
+            # Content Preparation
             name = s['name'].encode('latin-1', 'replace').decode('latin-1')
             note = s.get('note', '').strip().encode('latin-1', 'replace').decode('latin-1')
             
-            # Height calc
-            h = 8
-            if note: h += 6
+            # Height Calculation for this Stop Box
+            # Base height 10, plus extra if note exists
+            box_h = 10
+            if note: box_h += 6
             
+            # --- SMART PAGE BREAK CHECK (Stop Box) ---
+            # If this specific box won't fit, push to new page
+            # 297mm (A4) - 25mm (margin) = 272mm usable limit
+            if pdf.get_y() + box_h > 270:
+                pdf.add_page()
+                # Re-print "Continued" header if you want, or just continue
+            
+            # Box Style
+            if is_overnight:
+                pdf.set_fill_color(250, 250, 250) 
+                pdf.set_draw_color(0, 0, 0) # Black Border
+                pdf.set_line_width(0.5)
+            else:
+                pdf.set_fill_color(255, 255, 255) 
+                pdf.set_draw_color(180, 180, 180) # Light Border
+                pdf.set_line_width(0.2)
+                
             # Draw Box
             x = pdf.get_x()
             y = pdf.get_y()
-            pdf.rect(x, y, 190, h, 'FD')
+            pdf.rect(x, y, 190, box_h, 'FD')
             
             # Text inside box
-            pdf.set_xy(x + 4, y + 2)
+            pdf.set_xy(x + 3, y + 2)
             pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 5, name, ln=True)
+            pdf.set_text_color(0, 0, 0)
+            pdf.cell(0, 6, name, ln=True)
             
             if note:
-                pdf.set_x(x + 4)
+                pdf.set_x(x + 3)
                 pdf.set_font("Helvetica", "I", 9)
                 pdf.set_text_color(80, 80, 80)
                 pdf.cell(0, 5, note, ln=True)
-                pdf.set_text_color(0, 0, 0) # Reset
             
-            pdf.set_y(y + h + 2) # Move down for next item
+            # Reset Cursor for next item
+            pdf.set_y(y + box_h + 2) 
             
             # Draw Leg (if exists and not last in block)
             if i < b["end"]:
                 leg = legs[i]
                 if leg:
+                    # Check space for leg text (needs ~6mm)
+                    if pdf.get_y() + 6 > 270:
+                        pdf.add_page()
+
                     summ = leg_summary(leg)
                     lnote = f" ({leg['note']})" if leg.get("note") else ""
-                    full_leg = f"   |   {summ}{lnote}".encode('latin-1', 'replace').decode('latin-1')
+                    full_leg = f"      |   {summ}{lnote}".encode('latin-1', 'replace').decode('latin-1')
                     
                     pdf.set_font("Helvetica", "", 8)
                     pdf.set_text_color(100, 100, 100)
                     pdf.cell(0, 5, full_leg, ln=True)
-                    pdf.set_text_color(0, 0, 0)
                     pdf.ln(1)
                     
-        pdf.ln(5) # Space between days
+        pdf.ln(4) # Space between days
 
     return bytes(pdf.output())
 
