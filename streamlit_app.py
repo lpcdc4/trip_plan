@@ -649,7 +649,7 @@ def stop_row_html(s: Dict) -> str:
     overnight = bool(s.get("overnight", False))
     bg = "#e8f0ff" if overnight else "#ffffff"
     border = "#9bb7ff" if overnight else "#e5e7eb"
-    badge = "🌙 overnight" if overnight else ""
+    badge = "🌙 Pernottamento" if overnight else ""
     note = (s.get("note") or "").strip()
     note_html = f"<div style='margin-top:6px;color:#444;font-size:0.92rem;'><em>{note}</em></div>" if note else ""
     return f"""
@@ -664,7 +664,7 @@ def stop_row_html(s: Dict) -> str:
 
 
 # ======================= APP =======================
-st.set_page_config(page_title="Itinerary", layout="wide")
+st.set_page_config(page_title="Itinerario", layout="wide")
 init_state()
 ensure_legs_alignment()
 ss = st.session_state
@@ -750,7 +750,7 @@ if ss["pending_preview"]:
                     leg_note = st.text_input("Note spostamento", value="")
 
             # --- ROW 3: Checkbox (Full width or Left) ---
-            overnight = st.checkbox("Pernottamento Notturno", value=True)
+            overnight = st.checkbox("Pernottamento", value=True)
 
             st.write("") # Spacer
             if st.form_submit_button("Aggiungi Tappa", type="primary", use_container_width=True):
@@ -866,19 +866,19 @@ else:
         # Build the Header string
         if is_stay_day:
             # Simple Header for Stay Days
-            header = f"Day {b['day']} ({date_str}) · {start_stop['name']}"
+            header = f"Giorno {b['day']} ({date_str}) · {start_stop['name']}"
         elif b["start"] == b["end"]:
             # Single stop day (rare edge case)
-            header = f"Day {b['day']} ({date_str}) · {start_stop['name']}"
+            header = f"Giorno {b['day']} ({date_str}) · {start_stop['name']}"
         else:
             # Standard Travel Header
             time_str = ""
             if b["drive_seconds"] > 0:
-                time_str = f"Driving: {hhmm_from_seconds(b['drive_seconds'])}"
-            elif "plane" in modes: time_str = "Flight"
-            elif "train" in modes: time_str = "Train"
-            elif "bus" in modes: time_str = "Bus"
-            elif len(b["legs"]) > 0: time_str = "Travel"
+                time_str = f"Guida: {hhmm_from_seconds(b['drive_seconds'])}"
+            elif "plane" in modes: time_str = "Volo"
+            elif "train" in modes: time_str = "Treno"
+            elif "bus" in modes: time_str = "Autobus"
+            elif len(b["legs"]) > 0: time_str = "Viaggio"
             
             mid_part = f" · {time_str}" if time_str else ""
             header = f"Day {b['day']} ({date_str}){mid_part} · {start_stop['name']} ➝ {end_stop['name']}"
@@ -928,7 +928,7 @@ if ss["show_editor"]:
                     mark_dirty()
 
                 # Change / replace this stop
-                with st.expander("Change this stop (search)", expanded=False):
+                with st.expander("Sostituisci tappa con (cerca)", expanded=False):
                     def _search_local(q: str) -> List[str]:
                         return search_api_labels(q)
 
@@ -936,7 +936,7 @@ if ss["show_editor"]:
                     cand = ss.get("search_lookup", {}).get(sel) if sel else None
                     if cand:
                         st.caption(f"Preview: {cand['name']}")
-                        if st.button("Replace stop with this place", key=f"replace_stop_{i}"):
+                        if st.button("Sostituisci tappa con", key=f"replace_stop_{i}"):
                             old_stops = list(ss["stops"])
                             old_legs = list(ss["legs_between"])
                             ss["stops"][i]["name"] = cand["name"]
@@ -950,7 +950,7 @@ if ss["show_editor"]:
                             mark_dirty()
                             st.rerun()
             with c3:
-                if st.button("Delete", key=f"del_{s['id']}_{i}"):
+                if st.button("Elimina", key=f"del_{s['id']}_{i}"):
                     old_stops = list(ss["stops"])
                     old_legs = list(ss["legs_between"])
                     ss["stops"] = [x for j, x in enumerate(ss["stops"]) if j != i]
@@ -977,7 +977,7 @@ if ss["show_editor"]:
                 with cols[1]:
                     leg_note_i = st.text_input("Leg note", value=(leg.get("note", "") if leg else ""), key=f"legnote_{i}")
                 with cols[2]:
-                    if st.button("Apply", key=f"apply_{i}"):
+                    if st.button("Applica", key=f"apply_{i}"):
                         try:
                             if mode_i == "—":
                                 ss["legs_between"][i] = None
