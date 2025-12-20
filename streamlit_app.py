@@ -329,7 +329,7 @@ def hhmm_from_seconds(seconds: Optional[float]) -> Optional[str]:
         return None
     h = total_minutes // 60
     m = total_minutes % 60
-    return f"{h:02d}:{m:02d}"
+    return f"{h}h {m:02d}m"
 
 
 def driving_seconds_for_leg(leg: Optional[Dict]) -> int:
