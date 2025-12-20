@@ -13,7 +13,7 @@ import uuid
 import re
 from datetime import date, timedelta, datetime
 from typing import Dict, List, Optional, Tuple
-
+import json  
 import requests
 import streamlit as st
 import folium
@@ -669,6 +669,62 @@ init_state()
 ensure_legs_alignment()
 ss = st.session_state
 
+# ----------------------- Sidebar: Tools -----------------------
+with st.sidebar:
+    st.header("⚙️ Gestione Viaggio")
+    
+    # 1. CLONE (Version Control)
+    if st.button("©️ Clona Viaggio (Nuova versione)", help="Crea una copia esatta di questo itinerario con un nuovo ID."):
+        new_id = str(uuid.uuid4())[:8]
+        ss["current_trip_id"] = new_id
+        ss["trip_name"] = f"Copia di {ss['trip_name']}"
+        
+        # Update URL
+        if hasattr(st, "query_params"):
+            st.query_params["trip_id"] = new_id
+        else:
+            st.experimental_set_query_params(trip_id=new_id)
+            
+        mark_dirty() # Forces immediate save to new ID
+        st.success(f"Viaggio clonato! Nuovo ID: {new_id}")
+        st.rerun()
+
+    st.divider()
+
+    # 2. EXPORT JSON
+    # Prepare data exactly like we save to Supabase
+    export_data = {
+        "name": ss["trip_name"],
+        "trip_start_date": ss["trip_start_date"].isoformat(),
+        "stops": ss["stops"],
+        "legs_between": ss["legs_between"],
+        "last_updated": datetime.now().isoformat()
+    }
+    json_str = json.dumps(export_data, indent=2)
+    
+    st.download_button(
+        label="⬇️ Esporta JSON",
+        data=json_str,
+        file_name=f"itinerario_{ss['current_trip_id']}.json",
+        mime="application/json"
+    )
+
+    # 3. IMPORT JSON
+    uploaded_file = st.file_uploader("⬆️ Importa JSON", type=["json"])
+    if uploaded_file is not None:
+        try:
+            data = json.load(uploaded_file)
+            # Use the existing helper to load state
+            populate_state_from_data(data)
+            mark_dirty() # Mark as unsaved so it syncs to current ID
+            st.success("Itinerario caricato con successo!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Errore caricamento: {e}")
+
+    st.divider()
+    st.caption(f"Trip ID: `{ss['current_trip_id']}`")
+    
 # Header
 c1, c2, c3 = st.columns([3, 2, 2])
 with c1:
