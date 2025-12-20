@@ -651,10 +651,12 @@ def stop_row_html(s: Dict) -> str:
     badge = "🌙 Pernottamento" if overnight else ""
     note = (s.get("note") or "").strip()
     note_html = f"<div style='margin-top:6px;color:#444;font-size:0.92rem;'><em>{note}</em></div>" if note else ""
+    
+    # CHANGED: Removed {s['id']} from the display string
     return f"""
     <div style="background:{bg};border:1px solid {border};border-radius:12px;padding:12px 14px;margin:8px 0;">
       <div style="display:flex;gap:10px;align-items:baseline;justify-content:space-between;">
-        <div style="font-size:1.02rem;"><strong>{s['id']}</strong> — {s['name']}</div>
+        <div style="font-size:1.02rem;"><strong>{s['name']}</strong></div>
         <div style="font-size:0.92rem;color:#333;">{badge}</div>
       </div>
       {note_html}
