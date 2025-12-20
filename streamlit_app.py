@@ -830,80 +830,69 @@ if ss["stops"]:
 if not ss["stops"]:
     st.info("Nessuna tappa. Aggiungine una cercando qui sopra.")
 else:
-    # UPDATED: Collapsible Compact View with "Stay Day" Logic
     blocks = itinerary_day_blocks(ss["stops"], ss["legs_between"])
     for b in blocks:
         start_stop = ss["stops"][b["start"]]
         end_stop = ss["stops"][b["end"]]
         date_str = fmt_date(b["date"])
         
-        # --- LOGIC: Detect if this is a "Stay" day (Same place, no intermediate stops) ---
-        is_direct_link = (b["end"] == b["start"] + 1) # Only 2 stops (Start -> End)
+        # Check if direct link (Start -> End with no intermediate stops)
+        is_direct_link = (b["end"] == b["start"] + 1)
         
-        # Check distance/location
         is_same_loc = False
         if is_direct_link:
             leg = ss["legs_between"][b["start"]]
             if leg:
-                # If distance is very short (< 1km), treat as same place
-                dist = leg.get("distance_m") or 0
-                if dist < 1000: 
+                # FIX 1: Don't treat "None" distance (Plane) as 0km.
+                # Only treat as "Same Location" if distance is KNOWN and < 1km.
+                dist = leg.get("distance_m")
+                mode = leg.get("mode", "").lower()
+                
+                # If it's a plane, it's never a "stay" day (always show it)
+                if mode == "plane":
+                    is_same_loc = False
+                elif dist is not None and dist < 1000:
                     is_same_loc = True
             else:
-                # Fallback: Check if names are identical
-                if start_stop["name"] == end_stop["name"]:
-                    is_same_loc = True
+                # Fallback: Check names if leg is missing
+                if start_stop["name"] == end_stop["name"]: is_same_loc = True
 
-        # Definition of a "Stay Day": Direct link + Same Location
         is_stay_day = is_direct_link and is_same_loc
-        # -------------------------------------------------------------------------------
 
-        # Calculate summary modes
         modes = set()
         for li, leg in b["legs"]:
             if leg: modes.add(leg.get("mode", "car").lower())
         
-        # Build the Header string
-        if is_stay_day:
-            # Simple Header for Stay Days
-            header = f"Giorno {b['day']} ({date_str}) · {start_stop['name']}"
-        elif b["start"] == b["end"]:
-            # Single stop day (rare edge case)
-            header = f"Giorno {b['day']} ({date_str}) · {start_stop['name']}"
-        else:
-            # Standard Travel Header
-            time_str = ""
-            if b["drive_seconds"] > 0:
-                time_str = f"Guida: {hhmm_from_seconds(b['drive_seconds'])}"
-            elif "plane" in modes: time_str = "Volo"
-            elif "train" in modes: time_str = "Treno"
-            elif "bus" in modes: time_str = "Autobus"
-            elif len(b["legs"]) > 0: time_str = "Viaggio"
+        time_str = ""
+        if b["drive_seconds"] > 0:
+            time_str = f"Guida: {hhmm_from_seconds(b['drive_seconds'])}"
+        elif "plane" in modes or "aereo" in modes: time_str = "Volo"
+        elif "train" in modes or "treno" in modes: time_str = "Treno"
+        elif "bus" in modes: time_str = "Bus"
+        elif len(b["legs"]) > 0: time_str = "Viaggio"
             
-            mid_part = f" · {time_str}" if time_str else ""
-            header = f"Giorno {b['day']} ({date_str}){mid_part} · {start_stop['name']} ➝ {end_stop['name']}"
+        header = ""
+        if is_stay_day or b["start"] == b["end"]:
+             header = f"Giorno {b['day']} ({date_str}) · {start_stop['name']}"
+        else:
+             mid_part = f" · {time_str}" if time_str else ""
+             header = f"Giorno {b['day']} ({date_str}){mid_part} · {start_stop['name']} ➝ {end_stop['name']}"
 
-        # Render the Day Block
         with st.expander(header, expanded=False):
             for i in range(b["start"], b["end"] + 1):
                 s = ss["stops"][i]
-                
-                # Show the Stop
                 st.markdown(stop_row_html(s), unsafe_allow_html=True)
                 
-                # Show the Leg (only if NOT the last stop AND NOT a stay day)
                 if i < b["end"]:
-                    if is_stay_day:
-                        # HIDDEN: We skip rendering the leg because it's just 0km in the same city
-                        continue
-                    
+                    if is_stay_day: continue
                     leg = ss["legs_between"][i]
                     if leg:
-                          summ = leg_summary(leg)
-                          note_html = f" — <em>{leg['note']}</em>" if leg.get("note") else ""
-                          st.caption(f"🔻 **{summ}**{note_html}")
+                         summ = leg_summary(leg)
+                         # FIX 2: Use Markdown (*) instead of HTML (<em>) for notes
+                         note_md = f" — *{leg['note']}*" if leg.get("note") else ""
+                         st.caption(f"🔻 **{summ}**{note_md}")
                     else:
-                          st.caption("🔻 *Nessun dettaglio viaggio*")
+                         st.caption("🔻 *Nessun dettaglio*")
 
 # Editor (Hidden Section)
 if ss["show_editor"]:
