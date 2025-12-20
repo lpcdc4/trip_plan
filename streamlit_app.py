@@ -703,43 +703,33 @@ if selection and selected_label != ss["last_selected_label"]:
     ss["last_selected_label"] = selected_label
     ss["pending_preview"] = {"name": selection["name"], "lat": selection["lat"], "lon": selection["lon"]}
     ss["map_center"] = (selection["lat"], selection["lon"])
-    # Note: We don't mark dirty here to avoid reloading map just for preview
 
-# 2. Unified Add Form
+# 2. Unified Add Form (Aligned)
 if ss["pending_preview"]:
     p = ss["pending_preview"]
     with st.container(border=True):
         st.markdown(f"**Selezionato:** {p['name']}")
         
-        # Determine if we need travel details (Is this the first stop?)
+        # Determine context
         is_first = (len(ss["stops"]) == 0)
-        
-        # Smart Logic: Are we staying in the same place?
         is_same_place = False
         if not is_first:
             last = ss["stops"][-1]
-            # Check if names match (Simple check)
             if last["name"] == p["name"]:
                 is_same_place = True
         
-        # Create Form
         with st.form("add_stop_form"):
-            c_stop, c_leg = st.columns([1, 1])
+            # We use 2 columns for perfect alignment
+            c_left, c_right = st.columns(2)
             
-            # Left Side: Stop Details
-            with c_stop:
+            # --- ROW 1: Name vs Mode ---
+            with c_left:
                 st.caption("Dettagli Tappa")
-                ov_val = True
-                
-                overnight = st.checkbox("Notte", value=ov_val)
                 name_override = st.text_input("Nome (opzionale)", value="")
-                stop_note = st.text_input("Note tappa", value="")
-                
-            # Right Side: Travel Details (Hidden if same place!)
-            mode = "Auto" # Default
-            leg_note = ""
             
-            with c_leg:
+            with c_right:
+                mode = "Auto"
+                leg_note = ""
                 if is_first:
                     st.caption("Punto di partenza")
                     st.info("Nessuno spostamento")
@@ -748,25 +738,33 @@ if ss["pending_preview"]:
                     st.info("Nessuno spostamento")
                 else:
                     st.caption(f"Spostamento da {ss['stops'][-1]['name']}")
-                    # Italian options
+                    # This Selectbox will align perfectly with the Name Input on the left
                     mode = st.selectbox("Mezzo", ["Auto", "Treno", "Aereo", "Bus", "Altro"], index=0)
+
+            # --- ROW 2: Notes vs Notes ---
+            c_note_l, c_note_r = st.columns(2)
+            with c_note_l:
+                stop_note = st.text_input("Note tappa", value="")
+            with c_note_r:
+                if not is_first and not is_same_place:
                     leg_note = st.text_input("Note spostamento", value="")
+
+            # --- ROW 3: Checkbox (Full width or Left) ---
+            overnight = st.checkbox("Notte (Stop Notturno)", value=True)
 
             st.write("") # Spacer
             if st.form_submit_button("Aggiungi Tappa", type="primary", use_container_width=True):
-                # Add the stop
+                # Add Stop
                 final_name = name_override.strip() if name_override.strip() else p["name"]
                 add_stop_internal(final_name, p["lat"], p["lon"], overnight, stop_note)
                 
-                # Handle Leg
+                # Add Leg (if needed)
                 if not is_first:
                     prev_idx = len(ss["stops"]) - 2
                     if is_same_place:
-                        # Logic: Same place = No leg (None)
                         ss["legs_between"][prev_idx] = None
                         mark_dirty()
                     else:
-                        # Map Italian UI back to internal English keys
                         m_map = {"Auto": "car", "Treno": "train", "Aereo": "plane", "Bus": "bus", "Altro": "car"}
                         internal_mode = m_map.get(mode, "car")
                         set_leg_between(prev_idx, internal_mode, leg_note)
