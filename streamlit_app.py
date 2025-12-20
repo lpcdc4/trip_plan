@@ -672,12 +672,12 @@ ss = st.session_state
 # Header
 c1, c2, c3 = st.columns([3, 2, 2])
 with c1:
-    new_name = st.text_input("Trip name", ss["trip_name"])
+    new_name = st.text_input("Nome viaggio", ss["trip_name"])
     if new_name != ss["trip_name"]:
         ss["trip_name"] = new_name
         mark_dirty()
 with c2:
-    new_start = st.date_input("Trip start date", ss["trip_start_date"])
+    new_start = st.date_input("Data inizio viaggio", ss["trip_start_date"])
     if new_start != ss["trip_start_date"]:
         ss["trip_start_date"] = new_start
         mark_dirty()
@@ -686,11 +686,11 @@ with c3:
     st.text_input("Cloud ID", value=ss['current_trip_id'], disabled=True)
 
 # Search above map
-st.markdown("### Add next stop")
+st.markdown("### Aggiungi tappa")
 selected_label = st_searchbox(
     search_api_labels,
     key=f"searchbox_{ss['search_key_version']}",
-    placeholder="Type a place…",
+    placeholder="Cerca un luogo...",
     label="Search",
 )
 
@@ -786,11 +786,11 @@ st_folium(m, height=720, width=None, key=f"map_{ss['map_version']}", returned_ob
 st.divider()
 
 # Itinerary
-st.markdown("## Itinerary")
+st.markdown("## Itinerario")
 
 btn_col1, btn_col2 = st.columns([1, 5])
 with btn_col1:
-    if st.button("Edit itinerary" if not ss["show_editor"] else "Hide editor", use_container_width=True):
+    if st.button("Modifica" if not ss["show_editor"] else "Nascondi Modifica", use_container_width=True):
         ss["show_editor"] = not ss["show_editor"]
         st.rerun()
 
@@ -830,7 +830,7 @@ if ss["stops"]:
                 st.rerun()
 
 if not ss["stops"]:
-    st.info("No stops yet. Add one from the search box above.")
+    st.info("Nessuna tappa. Aggiungine una cercando qui sopra.")
 else:
     # UPDATED: Collapsible Compact View with "Stay Day" Logic
     blocks = itinerary_day_blocks(ss["stops"], ss["legs_between"])
