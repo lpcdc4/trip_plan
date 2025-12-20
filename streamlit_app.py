@@ -177,7 +177,7 @@ def set_defaults():
     ss.setdefault("sortable_items_cache", None)
     ss.setdefault("pending_stop", None)
     ss.setdefault("pending_preview", None)
-    ss.setdefault("show_editor", False)
+    ss.setdefault("editing_stop_idx", None)
 
 def populate_state_from_data(data: dict):
     ss = st.session_state
@@ -783,16 +783,12 @@ st_folium(m, height=720, width=None, key=f"map_{ss['map_version']}", returned_ob
 
 st.divider()
 
-# Itinerary
+# ------------------------------------------------------------------------------
+# ITINERARY SECTION (Replaces the old View + Editor sections)
+# ------------------------------------------------------------------------------
 st.markdown("## Itinerario")
 
-btn_col1, btn_col2 = st.columns([1, 5])
-with btn_col1:
-    if st.button("Modifica" if not ss["show_editor"] else "Fatto", use_container_width=True):
-        ss["show_editor"] = not ss["show_editor"]
-        st.rerun()
-
-# Drag & drop
+# Drag & drop (Keep this bit)
 if ss["stops"]:
     with st.expander("Riordina tappe (trascina e rilascia)", expanded=False):
         if not HAS_SORTABLES:
@@ -829,36 +825,30 @@ if ss["stops"]:
 
 if not ss["stops"]:
     st.info("Nessuna tappa. Aggiungine una cercando qui sopra.")
-elif not ss["show_editor"]:
+else:
     blocks = itinerary_day_blocks(ss["stops"], ss["legs_between"])
+    
     for b in blocks:
         start_stop = ss["stops"][b["start"]]
         end_stop = ss["stops"][b["end"]]
         date_str = fmt_date(b["date"])
         
-        # Check if direct link (Start -> End with no intermediate stops)
+        # Header Logic
         is_direct_link = (b["end"] == b["start"] + 1)
-        
         is_same_loc = False
         if is_direct_link:
             leg = ss["legs_between"][b["start"]]
             if leg:
-                # FIX 1: Don't treat "None" distance (Plane) as 0km.
-                # Only treat as "Same Location" if distance is KNOWN and < 1km.
                 dist = leg.get("distance_m")
                 mode = leg.get("mode", "").lower()
-                
-                # If it's a plane, it's never a "stay" day (always show it)
-                if mode == "plane":
-                    is_same_loc = False
-                elif dist is not None and dist < 1000:
-                    is_same_loc = True
+                if mode == "plane": is_same_loc = False
+                elif dist is not None and dist < 1000: is_same_loc = True
             else:
-                # Fallback: Check names if leg is missing
                 if start_stop["name"] == end_stop["name"]: is_same_loc = True
 
         is_stay_day = is_direct_link and is_same_loc
-
+        
+        # Calculate header title
         modes = set()
         for li, leg in b["legs"]:
             if leg: modes.add(leg.get("mode", "car").lower())
@@ -868,7 +858,6 @@ elif not ss["show_editor"]:
             time_str = f"Guida: {hhmm_from_seconds(b['drive_seconds'])}"
         elif "plane" in modes or "aereo" in modes: time_str = "Volo"
         elif "train" in modes or "treno" in modes: time_str = "Treno"
-        elif "bus" in modes: time_str = "Bus"
         elif len(b["legs"]) > 0: time_str = "Viaggio"
             
         header = ""
@@ -878,166 +867,117 @@ elif not ss["show_editor"]:
              mid_part = f" · {time_str}" if time_str else ""
              header = f"Giorno {b['day']} ({date_str}){mid_part} · {start_stop['name']} ➝ {end_stop['name']}"
 
+        # Render Block
         with st.expander(header, expanded=False):
             for i in range(b["start"], b["end"] + 1):
                 s = ss["stops"][i]
-                st.markdown(stop_row_html(s), unsafe_allow_html=True)
                 
-                if i < b["end"]:
-                    if is_stay_day: continue
-                    leg = ss["legs_between"][i]
-                    if leg:
-                         summ = leg_summary(leg)
-                         # FIX 2: Use Markdown (*) instead of HTML (<em>) for notes
-                         note_md = f" — *{leg['note']}*" if leg.get("note") else ""
-                         st.caption(f"🔻 **{summ}**{note_md}")
-                    else:
-                         st.caption("🔻 *Nessun dettaglio*")
+                # --- CHECK IF EDITING THIS STOP ---
+                if ss.get("editing_stop_idx") == i:
+                    with st.container(border=True):
+                        st.write(f"**Modifica: {s['name']}**")
+                        
+                        # 1. STOP DETAILS
+                        c_edit_1, c_edit_2 = st.columns([3, 2])
+                        with c_edit_1:
+                            new_name_edit = st.text_input("Nome", s['name'], key=f"edit_name_{i}")
+                            new_note_edit = st.text_input("Note", s.get("note", ""), key=f"edit_note_{i}")
+                        with c_edit_2:
+                            new_ov_edit = st.checkbox("Pernottamento", s.get("overnight", False), key=f"edit_ov_{i}")
+                            if st.button("🗑 Elimina Tappa", key=f"del_btn_{i}"):
+                                old_stops = list(ss["stops"])
+                                old_legs = list(ss["legs_between"])
+                                ss["stops"] = [x for j, x in enumerate(ss["stops"]) if j != i]
+                                ss["legs_between"] = rebuild_legs_from_old(old_stops, old_legs, ss["stops"])
+                                ensure_legs_alignment()
+                                ss["map_center"] = compute_center(ss["stops"])
+                                ss["editing_stop_idx"] = None
+                                mark_dirty()
+                                st.rerun()
 
-# Editor (Hidden Section)
-if ss["show_editor"]:
-    st.divider()
-    st.markdown("## Modifica itinerario (tappe + spostamenti)")
-    for i, s in enumerate(ss["stops"]):
-        with st.container(border=True):
-            ovtag = " (Pernottamento)" if s.get("overnight") else ""
-            st.write(f"### {i+1}. {s['id']} — {s['name']}{ovtag}")
+                        # 2. LEG DETAILS (Leaving this stop)
+                        # We allow editing the leg even if it's visually in the next day block
+                        new_mode_edit = None
+                        new_leg_note_edit = ""
+                        
+                        has_leg = (i < len(ss["stops"]) - 1)
+                        if has_leg:
+                            st.markdown("---")
+                            st.caption(f"Spostamento verso {ss['stops'][i+1]['name']}")
+                            cur_leg = ss["legs_between"][i]
+                            cur_mode = cur_leg.get("mode", "—") if cur_leg else "—"
+                            cur_leg_note = cur_leg.get("note", "") if cur_leg else ""
+                            
+                            cl1, cl2 = st.columns(2)
+                            with cl1:
+                                def fmt_mode(m):
+                                    return {"car": "Auto", "bus": "Bus", "train": "Treno", "plane": "Aereo", "ferry": "Traghetto", "—": "—"}.get(m, m)
+                                new_mode_edit = st.selectbox("Mezzo", ["—", "car", "bus", "train", "plane"], index=["—", "car", "bus", "train", "plane"].index(cur_mode) if cur_mode in ["—", "car", "bus", "train", "plane"] else 0, format_func=fmt_mode, key=f"edit_mode_{i}")
+                            with cl2:
+                                new_leg_note_edit = st.text_input("Note Spostamento", cur_leg_note, key=f"edit_leg_note_{i}")
 
-            c1, c2, c3 = st.columns([1, 4, 1])
-            with c1:
-                new_ov = st.checkbox("Pernottamento", value=bool(s.get("overnight", False)), key=f"ov_{s['id']}_{i}")
-                if new_ov != bool(s.get("overnight", False)):
-                    s["overnight"] = bool(new_ov)
-                    mark_dirty()
-                    st.rerun()
-            with c2:
-                new_note = st.text_input("Note tappa", value=str(s.get("note", "")), key=f"note_{s['id']}_{i}")
-                if new_note != str(s.get("note", "")):
-                    s["note"] = new_note
-                    mark_dirty()
+                        st.write("")
+                        if st.button("💾 Salva Modifiche", key=f"save_{i}", type="primary"):
+                            # Update Stop
+                            ss["stops"][i]["name"] = new_name_edit
+                            ss["stops"][i]["note"] = new_note_edit
+                            ss["stops"][i]["overnight"] = new_ov_edit
+                            
+                            # Update Leg (with Route Calculation)
+                            if has_leg:
+                                leg_changed = False
+                                if not ss["legs_between"][i]:
+                                    leg_changed = True # was None
+                                elif ss["legs_between"][i].get("mode") != new_mode_edit:
+                                    leg_changed = True
+                                
+                                # Just update note?
+                                if not leg_changed and ss["legs_between"][i]:
+                                    ss["legs_between"][i]["note"] = new_leg_note_edit
+                                
+                                # Re-route if mode changed
+                                if leg_changed or (new_mode_edit != "—" and not ss["legs_between"][i]):
+                                    if new_mode_edit == "—":
+                                        ss["legs_between"][i] = None
+                                    else:
+                                        a = ss["stops"][i]
+                                        b_stop = ss["stops"][i+1]
+                                        if new_mode_edit in {"car", "bus", "train"}:
+                                            with st.spinner("Ricalcolo percorso..."):
+                                                route = osrm_driving_route(a["lat"], a["lon"], b_stop["lat"], b_stop["lon"])
+                                            ss["legs_between"][i] = {"mode": new_mode_edit, "note": new_leg_note_edit, **route}
+                                        else:
+                                            ss["legs_between"][i] = {
+                                                "mode": "plane", "note": new_leg_note_edit, "distance_m": None, "duration_s": None,
+                                                "geometry_latlon": interpolate_line(a["lat"], a["lon"], b_stop["lat"], b_stop["lon"])
+                                            }
 
-                # Change / replace this stop
-                with st.expander("Sostituisci tappa con (cerca)", expanded=False):
-                    def _search_local(q: str) -> List[str]:
-                        return search_api_labels(q)
-
-                    sel = st_searchbox(_search_local, key=f"chgstop_sb_{i}_{ss['search_key_version']}", placeholder="Cerca luogo...", label="Cerca")
-                    cand = ss.get("search_lookup", {}).get(sel) if sel else None
-                    if cand:
-                        st.caption(f"Anteprima: {cand['name']}")
-                        if st.button("Sostituisci tappa con", key=f"replace_stop_{i}"):
-                            old_stops = list(ss["stops"])
-                            old_legs = list(ss["legs_between"])
-                            ss["stops"][i]["name"] = cand["name"]
-                            ss["stops"][i]["lat"] = float(cand["lat"])
-                            ss["stops"][i]["lon"] = float(cand["lon"])
-                            # Rebuild legs
-                            ss["legs_between"] = rebuild_legs_from_old(old_stops, old_legs, ss["stops"])
-                            ensure_legs_alignment()
-                            ss["map_center"] = (float(cand["lat"]), float(cand["lon"]))
-                            ss["pending_preview"] = None
+                            ss["editing_stop_idx"] = None
                             mark_dirty()
                             st.rerun()
-            with c3:
-                if st.button("Elimina", key=f"del_{s['id']}_{i}"):
-                    old_stops = list(ss["stops"])
-                    old_legs = list(ss["legs_between"])
-                    ss["stops"] = [x for j, x in enumerate(ss["stops"]) if j != i]
-                    ss["legs_between"] = rebuild_legs_from_old(old_stops, old_legs, ss["stops"])
-                    ensure_legs_alignment()
-                    ss["map_center"] = compute_center(ss["stops"])
-                    ss["pending_preview"] = None
-                    mark_dirty()
-                    st.rerun()
 
-            # ... (this goes inside the loop: for i, s in enumerate(ss["stops"]): )
+                else:
+                    # --- NORMAL VIEW ---
+                    # Use columns to put the pencil icon on the right
+                    c_disp, c_btn = st.columns([12, 1])
+                    with c_disp:
+                        st.markdown(stop_row_html(s), unsafe_allow_html=True)
+                    with c_btn:
+                        st.write("") # small spacer
+                        if st.button("✏️", key=f"edit_open_{i}", help="Modifica tappa"):
+                            ss["editing_stop_idx"] = i
+                            st.rerun()
 
-            if i < len(ss["stops"]) - 1:
-                ensure_legs_alignment()
-                leg = ss["legs_between"][i]
-                
-                # 1. Get current values from state to detect changes
-                cur_mode = leg.get("mode", "—") if leg else "—"
-                cur_note = leg.get("note", "") if leg else ""
-
-                st.write(f"**→ Spostamento:** {leg_summary(leg)}")
-
-                # 2. Layout: Mode | Note | Delete (No Apply button)
-                lc1, lc2, lc3 = st.columns([2, 5, 1])
-                
-                with lc1:
-                    def fmt_mode(m):
-                        return {"car": "Auto", "bus": "Bus", "train": "Treno", "plane": "Aereo", "ferry": "Traghetto", "—": "—"}.get(m, m)
-                    
-                    modes = ["—", "car", "bus", "train", "plane"]
-                    try:
-                        idx = modes.index(cur_mode)
-                    except:
-                        idx = 0
-                        
-                    # We compare this 'new_mode' to 'cur_mode' below
-                    new_mode = st.selectbox(
-                        "Mezzo", 
-                        modes, 
-                        index=idx, 
-                        format_func=fmt_mode, 
-                        key=f"mode_{i}", 
-                        label_visibility="collapsed"
-                    )
-
-                with lc2:
-                    new_note = st.text_input(
-                        "Note spostamento", 
-                        value=cur_note, 
-                        key=f"legnote_{i}", 
-                        label_visibility="collapsed", 
-                        placeholder="Note spostamento..."
-                    )
-
-                with lc3:
-                    if st.button("🗑", key=f"clear_{i}", help="Rimuovi spostamento"):
-                        ss["legs_between"][i] = None
-                        mark_dirty()
-                        st.rerun()
-
-                # 3. AUTOMATIC UPDATE LOGIC
-                
-                # Case A: User changed the NOTE (Text update only, no API call)
-                if new_note != cur_note:
-                    if ss["legs_between"][i]:
-                        ss["legs_between"][i]["note"] = new_note.strip()
-                        mark_dirty()
-                        # We don't force rerun here to keep typing smooth, 
-                        # unless you want the map tooltip to update instantly.
-                
-                # Case B: User changed the MODE (Requires Routing API)
-                if new_mode != cur_mode:
-                    try:
-                        if new_mode == "—":
-                            ss["legs_between"][i] = None
-                        else:
-                            a = ss["stops"][i]
-                            b2 = ss["stops"][i + 1]
-                            
-                            # Use the note from the input in case they changed both
-                            note_to_save = new_note.strip()
-                            
-                            if new_mode in {"car", "bus", "train"}:
-                                with st.spinner("Calcolo percorso..."):
-                                    route = osrm_driving_route(a["lat"], a["lon"], b2["lat"], b2["lon"])
-                                ss["legs_between"][i] = {"mode": new_mode, "note": note_to_save, **route}
-                            else:  # plane
-                                ss["legs_between"][i] = {
-                                    "mode": "plane",
-                                    "note": note_to_save,
-                                    "distance_m": None,
-                                    "duration_s": None,
-                                    "geometry_latlon": interpolate_line(a["lat"], a["lon"], b2["lat"], b2["lon"]),
-                                }
-                        mark_dirty()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Errore: {e}")
+                    # Show Leg Summary (only if not hidden by logic)
+                    if i < b["end"]:
+                         if is_stay_day: continue
+                         leg = ss["legs_between"][i]
+                         if leg:
+                             summ = leg_summary(leg)
+                             note_md = f" — *{leg['note']}*" if leg.get("note") else ""
+                             st.caption(f"🔻 **{summ}**{note_md}")
+                         else:
+                             st.caption("🔻 *Nessun dettaglio*")
 
 # Autosave
 if ss["dirty"]:
