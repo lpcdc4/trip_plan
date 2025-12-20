@@ -336,7 +336,10 @@ def driving_seconds_for_leg(leg: Optional[Dict]) -> int:
     if not leg:
         return 0
     mode = (leg.get("mode") or "").lower()
-    if mode in {"car", "bus", "train"} and leg.get("duration_s") is not None:
+    
+    # CHANGED: Only count "car" or "auto" as driving time.
+    # Trains and buses are now excluded from the "Guida" total.
+    if mode in {"car", "auto"} and leg.get("duration_s") is not None:
         try:
             return int(round(float(leg["duration_s"])))
         except Exception:
