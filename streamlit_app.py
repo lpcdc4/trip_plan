@@ -587,7 +587,7 @@ def apply_stop_reorder(new_order_ids: List[str]):
         B = new_stops[i + 1]
         try:
             route = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-            new_legs.append({"mode": "car", "note": "Auto-routed", **route})
+            new_legs.append({"mode": "car", "note": "", **route})
         except:
             new_legs.append(None)
 
