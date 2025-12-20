@@ -769,12 +769,9 @@ with st.sidebar:
 
     st.divider()
 
-   # 2. PRINT VIEW TOGGLE
-    # Use .get() to prevent crash if "print_mode" is missing from old session
-    current_print_mode = ss.get("print_mode", False)
-    
-    if st.button("🖨️ Vista Stampa (PDF)" if not current_print_mode else "🔙 Vista Normale"):
-        ss["print_mode"] = not current_print_mode
+  # 2. PRINT VIEW TOGGLE
+    if st.button("🖨️ Vista Stampa (PDF)" if not ss["print_mode"] else "🔙 Vista Normale"):
+        ss["print_mode"] = not ss["print_mode"]
         st.rerun()
     
     # 3. EDIT TOOLS (Only if can_edit)
