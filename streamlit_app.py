@@ -849,16 +849,22 @@ st.markdown("## Itinerario")
 if ss["stops"]:
     # ... inside the "if ss['stops']:" block ...
 
+    # --------------------------------------------------------------------------
+    # DRAG & DROP (Fix: Uses visual numbering to track order without showing S1/S2)
+    # --------------------------------------------------------------------------
     with st.expander("Riordina tappe (trascina e rilascia)", expanded=False):
         if not HAS_SORTABLES:
             st.error("Drag & drop requires: pip install streamlit-sortables")
         else:
-            # CHANGED: Display "1. Name" instead of "S1 | Name"
+            # We display "1. Name", "2. Name". 
+            # This is clean for the user but gives us a unique number (the index) to track.
             base_items = [f"{i+1}. {s['name']}" for i, s in enumerate(ss["stops"])]
             
             if ss.get("sortable_items_cache") is None or len(ss["sortable_items_cache"]) != len(base_items):
                 ss["sortable_items_cache"] = base_items
 
+            # The sortable widget returns the list of strings in the NEW order
+            # e.g., ["2. Firenze", "1. Roma"]
             new_items = sort_items(
                 ss["sortable_items_cache"],
                 direction="vertical",
@@ -866,33 +872,25 @@ if ss["stops"]:
             )
             ss["sortable_items_cache"] = list(new_items)
 
-            # Check if order changed
             if new_items != base_items:
-                # Logic to reconstruct order based on names
-                # We create a pool of available stops and pick them as they appear in the new list
-                
-                # 1. Create a map of Name -> List of Stop Objects (to handle duplicates)
-                name_map = {}
-                for s in ss["stops"]:
-                    name_map.setdefault(s["name"], []).append(s)
-                
-                # 2. Rebuild new ID order
+                # 1. Reconstruct the list of IDs based on the numbers in the strings
                 new_order_ids = []
-                for item in new_items:
-                    # Parse name from "1. Name"
-                    if ". " in str(item):
-                        name_only = str(item).split(". ", 1)[1]
-                    else:
-                        name_only = str(item)
-                    
-                    # Pop the next available stop with this name
-                    if name_only in name_map and name_map[name_only]:
-                        stop_obj = name_map[name_only].pop(0)
-                        new_order_ids.append(stop_obj["id"])
-                
-                # Apply
+                try:
+                    for item in new_items:
+                        # Extract the number at the start: "2. Firenze" -> 2
+                        # The number corresponds to the ORIGINAL index + 1
+                        original_num_str = str(item).split(". ", 1)[0]
+                        original_idx = int(original_num_str) - 1
+                        
+                        # Retrieve the stable ID (S1, S2...) from that index
+                        if 0 <= original_idx < len(ss["stops"]):
+                            new_order_ids.append(ss["stops"][original_idx]["id"])
+                except Exception:
+                    pass
+
+                # 2. Apply the reorder using the internal IDs
                 current_ids = [s["id"] for s in ss["stops"]]
-                if new_order_ids and new_order_ids != current_ids:
+                if new_order_ids and len(new_order_ids) == len(current_ids) and new_order_ids != current_ids:
                     apply_stop_reorder(new_order_ids)
                     renumber_stops_and_update()
                     ss["sortable_items_cache"] = None
