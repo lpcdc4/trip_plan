@@ -50,17 +50,17 @@ def check_password():
         else:
             st.session_state["password_correct"] = False
 
-    st.set_page_config(page_title="Trip Login", layout="centered")
-    st.title("🔒 Trip Planner Protected")
+    st.set_page_config(page_title="Accesso Viaggio", layout="centered")
+    st.title("🔒 Trip Planner Protetto")
     st.text_input(
-        "Enter PIN to access:", 
+        "Inserisci PIN per accedere:", 
         type="password", 
         on_change=password_entered, 
         key="password_input"
     )
     
     if "password_correct" in st.session_state and not st.session_state["password_correct"]:
-        st.error("❌ Incorrect PIN")
+        st.error("❌ PIN non corretto")
 
     return False
 
@@ -131,7 +131,7 @@ def save_to_supabase():
         }).execute()
         ss["dirty"] = False
     except Exception as e:
-        st.warning(f"Sync failed: {e}")
+        st.warning(f"Sincronizzazione fallita: {e}")
 
 def init_state():
     ss = st.session_state
@@ -161,7 +161,7 @@ def init_state():
 
 def set_defaults():
     ss = st.session_state
-    ss.setdefault("trip_name", "My Trip")
+    ss.setdefault("trip_name", "Il Mio Viaggio")
     ss.setdefault("user_agent", DEFAULT_USER_AGENT)
     ss.setdefault("trip_start_date", date.today())
     ss.setdefault("stops", [])
@@ -181,7 +181,7 @@ def set_defaults():
 
 def populate_state_from_data(data: dict):
     ss = st.session_state
-    ss["trip_name"] = data.get("name", "Imported Trip")
+    ss["trip_name"] = data.get("name", "Viaggio Importato")
     try:
         ss["trip_start_date"] = date.fromisoformat(data.get("trip_start_date"))
     except:
@@ -442,8 +442,8 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         p = ss["pending_preview"]
         folium.Marker(
             [p["lat"], p["lon"]],
-            tooltip="Next stop (preview)",
-            popup=f"<b>Next stop</b><br>{p['name']}",
+            tooltip="Prossima tappa (anteprima)",
+            popup=f"<b>Prossima tappa</b><br>{p['name']}",
             icon=folium.Icon(color="green", icon="search"),
         ).add_to(m)
 
@@ -691,7 +691,7 @@ selected_label = st_searchbox(
     search_api_labels,
     key=f"searchbox_{ss['search_key_version']}",
     placeholder="Cerca un luogo...",
-    label="Search",
+    label="Cerca",
 )
 
 selection = None
@@ -794,7 +794,7 @@ with btn_col1:
 
 # Drag & drop
 if ss["stops"]:
-    with st.expander("Reorder stops (drag & drop)", expanded=False):
+    with st.expander("Riordina tappe (trascina e rilascia)", expanded=False):
         if not HAS_SORTABLES:
             st.error("Drag & drop requires: pip install streamlit-sortables")
         else:
@@ -824,7 +824,7 @@ if ss["stops"]:
                 apply_stop_reorder(new_order_ids)
                 renumber_stops_and_update()
                 ss["sortable_items_cache"] = None
-                st.success("Reordered.")
+                st.success("Ordine aggiornato.")
                 st.rerun()
 
 if not ss["stops"]:
@@ -881,7 +881,7 @@ else:
             elif len(b["legs"]) > 0: time_str = "Viaggio"
             
             mid_part = f" · {time_str}" if time_str else ""
-            header = f"Day {b['day']} ({date_str}){mid_part} · {start_stop['name']} ➝ {end_stop['name']}"
+            header = f"Giorno {b['day']} ({date_str}){mid_part} · {start_stop['name']} ➝ {end_stop['name']}"
 
         # Render the Day Block
         with st.expander(header, expanded=False):
@@ -899,30 +899,30 @@ else:
                     
                     leg = ss["legs_between"][i]
                     if leg:
-                         summ = leg_summary(leg)
-                         note_html = f" — <em>{leg['note']}</em>" if leg.get("note") else ""
-                         st.caption(f"🔻 **{summ}**{note_html}")
+                          summ = leg_summary(leg)
+                          note_html = f" — <em>{leg['note']}</em>" if leg.get("note") else ""
+                          st.caption(f"🔻 **{summ}**{note_html}")
                     else:
-                         st.caption("🔻 *No travel details*")
+                          st.caption("🔻 *Nessun dettaglio viaggio*")
 
 # Editor (Hidden Section)
 if ss["show_editor"]:
     st.divider()
-    st.markdown("## Edit itinerary (stops + legs)")
+    st.markdown("## Modifica itinerario (tappe + spostamenti)")
     for i, s in enumerate(ss["stops"]):
         with st.container(border=True):
-            ovtag = " (overnight)" if s.get("overnight") else ""
+            ovtag = " (Pernottamento)" if s.get("overnight") else ""
             st.write(f"### {i+1}. {s['id']} — {s['name']}{ovtag}")
 
             c1, c2, c3 = st.columns([1, 4, 1])
             with c1:
-                new_ov = st.checkbox("Overnight", value=bool(s.get("overnight", False)), key=f"ov_{s['id']}_{i}")
+                new_ov = st.checkbox("Pernottamento", value=bool(s.get("overnight", False)), key=f"ov_{s['id']}_{i}")
                 if new_ov != bool(s.get("overnight", False)):
                     s["overnight"] = bool(new_ov)
                     mark_dirty()
                     st.rerun()
             with c2:
-                new_note = st.text_input("Stop note", value=str(s.get("note", "")), key=f"note_{s['id']}_{i}")
+                new_note = st.text_input("Note tappa", value=str(s.get("note", "")), key=f"note_{s['id']}_{i}")
                 if new_note != str(s.get("note", "")):
                     s["note"] = new_note
                     mark_dirty()
@@ -932,10 +932,10 @@ if ss["show_editor"]:
                     def _search_local(q: str) -> List[str]:
                         return search_api_labels(q)
 
-                    sel = st_searchbox(_search_local, key=f"chgstop_sb_{i}_{ss['search_key_version']}", placeholder="Type a place…", label="Search")
+                    sel = st_searchbox(_search_local, key=f"chgstop_sb_{i}_{ss['search_key_version']}", placeholder="Cerca luogo...", label="Cerca")
                     cand = ss.get("search_lookup", {}).get(sel) if sel else None
                     if cand:
-                        st.caption(f"Preview: {cand['name']}")
+                        st.caption(f"Anteprima: {cand['name']}")
                         if st.button("Sostituisci tappa con", key=f"replace_stop_{i}"):
                             old_stops = list(ss["stops"])
                             old_legs = list(ss["legs_between"])
@@ -964,18 +964,23 @@ if ss["show_editor"]:
             if i < len(ss["stops"]) - 1:
                 ensure_legs_alignment()
                 leg = ss["legs_between"][i]
-                st.write(f"**→ Leg:** {leg_summary(leg)}")
+                st.write(f"**→ Spostamento:** {leg_summary(leg)}")
 
                 cols = st.columns([2, 4, 1, 1])
                 with cols[0]:
+                    # Helper for display name
+                    def fmt_mode(m):
+                        return {"car": "Auto", "bus": "Bus", "train": "Treno", "plane": "Aereo", "ferry": "Traghetto", "—": "—"}.get(m, m)
+
                     mode_i = st.selectbox(
-                        "Mode",
+                        "Mezzo",
                         ["—", "car", "bus", "train", "plane"],
                         index=0 if not leg else ["—", "car", "bus", "train", "plane"].index(leg.get("mode", "—")),
+                        format_func=fmt_mode,
                         key=f"mode_{i}",
                     )
                 with cols[1]:
-                    leg_note_i = st.text_input("Leg note", value=(leg.get("note", "") if leg else ""), key=f"legnote_{i}")
+                    leg_note_i = st.text_input("Note spostamento", value=(leg.get("note", "") if leg else ""), key=f"legnote_{i}")
                 with cols[2]:
                     if st.button("Applica", key=f"apply_{i}"):
                         try:
@@ -998,10 +1003,10 @@ if ss["show_editor"]:
                                     }
                                 mark_dirty()
                         except Exception as e:
-                            st.error(f"Routing failed: {e}")
+                            st.error(f"Routing fallito: {e}")
                         st.rerun()
                 with cols[3]:
-                    if st.button("Clear", key=f"clear_{i}"):
+                    if st.button("Rimuovi", key=f"clear_{i}"):
                         ss["legs_between"][i] = None
                         mark_dirty()
                         st.rerun()
@@ -1009,4 +1014,3 @@ if ss["show_editor"]:
 # Autosave
 if ss["dirty"]:
     save_to_supabase()
-    st.toast("Saved to cloud.")
