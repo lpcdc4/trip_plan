@@ -17,6 +17,8 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 import streamlit as st
+from fpdf import FPDF
+import io
 import folium
 from streamlit_folium import st_folium
 import polyline as polyline_lib
@@ -624,111 +626,125 @@ init_state()
 ensure_legs_alignment()
 ss = st.session_state
 
-# ----------------------- CSS for Printing -----------------------
-if ss.get("print_mode"):
-    # 1. Add a Manual Print Button at the top of the main area (in case auto-trigger fails)
-    c_print, c_back = st.columns([1, 10])
-    with c_print:
-        # This uses a hack to trigger print via a button if the auto-script fails
-        st.markdown(f"""
-            <button onclick="window.print()" style="
-                background-color: #333; color: white; border: none; padding: 10px 20px; 
-                cursor: pointer; font-weight: bold; border-radius: 4px;">
-                🖨️ STAMPA
-            </button>
-        """, unsafe_allow_html=True)
-    with c_back:
-        if st.button("🔙 Torna alla modifica"):
-            ss["print_mode"] = False
-            st.rerun()
 
-    # 2. THE CSS
-    st.markdown("""
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
-            
-            /* --- GLOBAL STYLES (Apply to Screen AND Print) --- */
-            /* This ensures you see the 'Preview' exactly as it will print */
-            
-            /* Typography & Base */
-            html, body, [data-testid="stAppViewContainer"] {
-                font-family: 'Roboto', sans-serif !important;
-                color: #000 !important;
-            }
-            
-            /* Map: Grayscale & Compact */
-            iframe { 
-                filter: grayscale(100%) contrast(1.1);
-                border: 2px solid #000 !important; 
-                border-radius: 0 !important; 
-            }
+# ----------------------- PDF Generator -----------------------
+class TripPDF(FPDF):
+    def header(self):
+        self.set_font("Helvetica", "B", 12)
+        self.cell(0, 10, st.session_state["trip_name"], border=False, align="R")
+        self.ln(15)
 
-            /* Headers */
-            h1 { text-transform: uppercase; border-bottom: 3px solid black; }
-            h4 {
-                background: #eee !important;
-                padding: 4px 8px !important;
-                border-left: 4px solid black !important;
-                color: black !important;
-                margin-top: 10px !important;
-            }
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Helvetica", "I", 8)
+        self.cell(0, 10, f"Pagina {self.page_no()}/{{nb}}", align="C")
 
-            /* Stop Boxes: Square & Compact */
-            div[style*="border-radius:12px"] {
-                border-radius: 0 !important;
-                border: 1px solid #aaa !important;
-                background-color: #fff !important;
-                box-shadow: none !important;
-                margin: 2px 0 !important;
-                padding: 4px 6px !important;
-            }
-
-            /* Overnight Stops */
-            div[style*="background:#e8f0ff"] {
-                background-color: #f0f0f0 !important;
-                border: 1px solid #333 !important;
-                border-left: 5px solid #333 !important;
-            }
-
-            /* Regular Stops */
-            div[style*="background:#ffffff"] {
-                border-left: 1px solid #ccc !important;
-            }
-
-            /* Remove Streamlit Gaps */
-            .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; }
-            div[data-testid="stVerticalBlock"] { gap: 0 !important; }
-            
-            /* --- PRINT ONLY OVERRIDES (Hide UI) --- */
-            @media print {
-                @page { margin: 0.8cm; size: A4; }
-                
-                /* Hide Buttons & Sidebar */
-                [data-testid="stSidebar"], 
-                [data-testid="stHeader"], 
-                .stDeployButton, 
-                footer, 
-                button, 
-                .stButton {
-                    display: none !important; 
-                }
-                
-                /* Maximize Width */
-                .block-container {
-                    padding: 0 !important;
-                    max-width: 100% !important;
-                }
-                
-                iframe { height: 350px !important; margin-bottom: 10px !important; }
-                
-                /* Hide the manual buttons we added above */
-                button[onclick="window.print()"] { display: none !important; }
-            }
-        </style>
-    """, unsafe_allow_html=True)
+def generate_pdf_bytes(trip_name, start_date, stops, legs):
+    pdf = TripPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
     
-    # 3. Auto-trigger print
-    st.markdown("<script>setTimeout(function() { window.print(); }, 800);</script>", unsafe_allow_html=True)
+    # 1. TITLE
+    pdf.set_font("Helvetica", "B", 24)
+    pdf.cell(0, 15, trip_name.upper(), ln=True, align="L")
+    
+    pdf.set_font("Helvetica", "", 12)
+    pdf.cell(0, 10, f"Inizio viaggio: {start_date.strftime('%d/%m/%Y')}", ln=True)
+    pdf.ln(5)
+    
+    # 2. GENERATE BLOCKS
+    # We reuse the existing logic to group days
+    blocks = itinerary_day_blocks(stops, legs)
+    
+    for b in blocks:
+        # --- DAY HEADER ---
+        pdf.set_fill_color(230, 230, 230) # Light Grey
+        pdf.set_font("Helvetica", "B", 12)
+        
+        # Calculate Header Text
+        start_stop = stops[b["start"]]
+        end_stop = stops[b["end"]]
+        date_str = b["date"].strftime("%d/%m/%y")
+        
+        # Travel Mode text
+        time_parts = []
+        if b["drive_seconds"] > 0: time_parts.append(f"Guida ({hhmm_from_seconds(b['drive_seconds'])})")
+        modes = set()
+        for li, leg in b["legs"]:
+             if leg: modes.add(leg.get("mode", "car").lower())
+        if "plane" in modes or "aereo" in modes: time_parts.append("Volo")
+        if "train" in modes or "treno" in modes: time_parts.append("Treno")
+        if "bus" in modes: time_parts.append("Bus")
+        if "ferry" in modes or "traghetto" in modes: time_parts.append("Traghetto")
+        if not time_parts and len(b["legs"]) > 0: time_parts.append("Viaggio")
+        
+        mid_part = f"   |   {' + '.join(time_parts)}" if time_parts else ""
+        
+        header_text = f"GIORNO {b['day']}  -  {date_str}{mid_part}"
+        
+        pdf.cell(0, 10, header_text, ln=True, fill=True, border=False)
+        pdf.ln(2)
+        
+        # --- STOPS ---
+        pdf.set_font("Helvetica", "", 11)
+        
+        for i in range(b["start"], b["end"] + 1):
+            s = stops[i]
+            is_overnight = s.get("overnight", False)
+            
+            # Box Style
+            if is_overnight:
+                pdf.set_fill_color(245, 245, 245) # Very light grey
+                pdf.set_draw_color(50, 50, 50)    # Dark Grey Border
+                pdf.set_line_width(0.5)
+            else:
+                pdf.set_fill_color(255, 255, 255) # White
+                pdf.set_draw_color(150, 150, 150) # Light Border
+                pdf.set_line_width(0.2)
+                
+            # Content
+            name = s['name']
+            note = s.get('note', '').strip()
+            
+            # Height calc
+            h = 8
+            if note: h += 6
+            
+            # Draw Box
+            x = pdf.get_x()
+            y = pdf.get_y()
+            pdf.rect(x, y, 190, h, 'FD')
+            
+            # Text inside box
+            pdf.set_xy(x + 4, y + 2)
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(0, 5, name, ln=True)
+            
+            if note:
+                pdf.set_x(x + 4)
+                pdf.set_font("Helvetica", "I", 9)
+                pdf.set_text_color(80, 80, 80)
+                pdf.cell(0, 5, note, ln=True)
+                pdf.set_text_color(0, 0, 0) # Reset
+            
+            pdf.set_y(y + h + 2) # Move down for next item
+            
+            # Draw Leg (if exists and not last in block)
+            if i < b["end"]:
+                leg = legs[i]
+                if leg:
+                    summ = leg_summary(leg)
+                    lnote = f" ({leg['note']})" if leg.get("note") else ""
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.set_text_color(100, 100, 100)
+                    pdf.cell(0, 5, f"   |   {summ}{lnote}", ln=True)
+                    pdf.set_text_color(0, 0, 0)
+                    pdf.ln(1)
+                    
+        pdf.ln(5) # Space between days
+
+    return bytes(pdf.output())
+
 # ----------------------- Sidebar: Auth & Tools -----------------------
 with st.sidebar:
     st.header("⚙️ Menu")
