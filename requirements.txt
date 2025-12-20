@@ -6,3 +6,4 @@ polyline
 streamlit-searchbox
 streamlit-sortables
 supabase
+fpdf2
