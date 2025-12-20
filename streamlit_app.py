@@ -232,7 +232,7 @@ def day_to_date(day_num: int) -> date:
     return st.session_state["trip_start_date"] + timedelta(days=int(day_num) - 1)
 
 def fmt_date(d: Optional[date]) -> str:
-    return d.isoformat() if d else ""
+    return d.strftime("%d/%m/%y") if d else ""
 
 
 # ----------------------- External calls -----------------------
