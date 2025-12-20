@@ -628,66 +628,109 @@ ss = st.session_state
 if ss.get("print_mode"):
     st.markdown("""
         <style>
-            /* Load a nice font for the document */
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
             
             @media print {
                 @page { 
-                    margin: 1.5cm; 
+                    margin: 0.8cm; 
                     size: A4; 
                 }
                 
                 html, body, [data-testid="stAppViewContainer"] {
-                    font-family: 'Inter', sans-serif !important;
+                    font-family: 'Roboto', sans-serif !important;
                     background-color: white !important;
-                    color: black !important;
+                    color: #000 !important;
+                    font-size: 10pt !important; /* Base font smaller */
                 }
 
                 /* HIDE UI ELEMENTS */
-                [data-testid="stSidebar"], 
-                [data-testid="stHeader"], 
-                .stDeployButton, 
-                footer, 
-                #MainMenu,
-                button {
+                [data-testid="stSidebar"], [data-testid="stHeader"], .stDeployButton, footer, button, .stButton {
                     display: none !important; 
                 }
 
-                /* RESET LAYOUT */
+                /* RESET LAYOUT - Remove all Streamlit gaps */
                 .block-container {
                     padding: 0 !important;
                     max-width: 100% !important;
-                    margin: 0 !important;
+                    gap: 0 !important;
+                }
+                div[data-testid="stVerticalBlock"] {
+                    gap: 0 !important;
                 }
                 
-                /* MAP STYLING */
+                /* MAP STYLING: Smaller & Compact */
                 iframe { 
-                    height: 500px !important; 
+                    height: 350px !important; /* Reduced height */
                     width: 100% !important; 
-                    border: 1px solid #ddd !important; 
-                    border-radius: 8px !important;
-                    page-break-inside: avoid; /* Try not to split map across pages */
-                    margin-bottom: 20px !important;
+                    border: 2px solid #000 !important; 
+                    border-radius: 0 !important; 
+                    filter: grayscale(100%) contrast(1.1);
+                    margin-bottom: 15px !important;
                 }
 
-                /* FORCE BACKGROUND COLORS (Important for Stop Boxes) */
-                * {
-                    -webkit-print-color-adjust: exact !important;
-                    print-color-adjust: exact !important;
+                /* MAIN TITLE */
+                h1 { 
+                    font-size: 20pt !important; 
+                    text-transform: uppercase; 
+                    border-bottom: 3px solid black;
+                    margin-bottom: 5px !important;
+                    padding-bottom: 0 !important;
+                }
+
+                /* DAY HEADERS */
+                h4 {
+                    font-size: 11pt !important;
+                    font-weight: 700 !important;
+                    background: #eee !important;
+                    padding: 4px 8px !important; /* Tighter padding */
+                    border-left: 4px solid black !important;
+                    margin-top: 10px !important;
+                    margin-bottom: 4px !important;
+                    color: black !important;
+                    page-break-after: avoid;
+                }
+
+                /* STOP BOXES - COMPACT */
+                div[style*="border-radius:12px"] {
+                    border-radius: 0 !important;
+                    border: 1px solid #aaa !important;
+                    background-color: #fff !important;
+                    box-shadow: none !important;
+                    margin: 2px 0 !important; /* Very small margin */
+                    padding: 4px 6px !important; /* Tighter padding inside */
+                    font-size: 10pt !important;
+                    page-break-inside: avoid;
+                }
+
+                /* OVERNIGHT STOPS */
+                div[style*="background:#e8f0ff"] {
+                    background-color: #f0f0f0 !important;
+                    border: 1px solid #333 !important;
+                    border-left: 5px solid #333 !important;
                 }
                 
-                /* HEADER & TYPOGRAPHY */
-                h1 { font-size: 24pt !important; margin-bottom: 0 !important; }
-                h2 { font-size: 18pt !important; border-bottom: 2px solid #333; padding-bottom: 5px; margin-top: 20px; }
-                h3, h4 { font-size: 14pt !important; }
-                p, div { font-size: 11pt !important; line-height: 1.4; }
+                /* REGULAR STOPS */
+                div[style*="background:#ffffff"] {
+                    border-left: 1px solid #ccc !important;
+                }
+                
+                /* NOTES & TEXT */
+                p, em, strong, div { 
+                    color: black !important; 
+                    line-height: 1.2 !important; /* Tighter lines */
+                }
+                
+                /* HIDE LEGS IF EMPTY or too small */
+                div[data-testid="caption"] {
+                    font-size: 9pt !important;
+                    margin-bottom: 2px !important;
+                    color: #444 !important;
+                }
             }
         </style>
     """, unsafe_allow_html=True)
     
-    # Auto-trigger print dialog
-    st.markdown("<script>setTimeout(function() { window.print(); }, 1000);</script>", unsafe_allow_html=True)
-
+    st.markdown("<script>setTimeout(function() { window.print(); }, 800);</script>", unsafe_allow_html=True)
 # ----------------------- Sidebar: Auth & Tools -----------------------
 with st.sidebar:
     st.header("⚙️ Menu")
