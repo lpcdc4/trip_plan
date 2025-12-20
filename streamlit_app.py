@@ -912,12 +912,35 @@ else:
         for li, leg in b["legs"]:
             if leg: modes.add(leg.get("mode", "car").lower())
         
-        time_str = ""
+        # ----------------------------------------------------------------------
+        # UPDATED HEADER TIME LOGIC (Concatenates modes)
+        # ----------------------------------------------------------------------
+        time_parts = []
+        
+        # 1. Calculate total drive time
         if b["drive_seconds"] > 0:
-            time_str = f"Guida: {hhmm_from_seconds(b['drive_seconds'])}"
-        elif "plane" in modes or "aereo" in modes: time_str = "Volo"
-        elif "train" in modes or "treno" in modes: time_str = "Treno"
-        elif len(b["legs"]) > 0: time_str = "Viaggio"
+            time_parts.append(f"Guida ({hhmm_from_seconds(b['drive_seconds'])})")
+            
+        # 2. Check for other specific modes
+        modes = set()
+        for li, leg in b["legs"]:
+            if leg: modes.add(leg.get("mode", "car").lower())
+
+        if "plane" in modes or "aereo" in modes:
+            time_parts.append("Volo")
+        if "train" in modes or "treno" in modes:
+            time_parts.append("Treno")
+        if "bus" in modes:
+            time_parts.append("Bus")
+        if "ferry" in modes or "traghetto" in modes:
+            time_parts.append("Traghetto")
+            
+        # Fallback if we have legs but no specific parts added (e.g. unknown mode)
+        if not time_parts and len(b["legs"]) > 0:
+            time_parts.append("Viaggio")
+            
+        time_str = " + ".join(time_parts)
+        # ----------------------------------------------------------------------
             
         header = ""
         if is_stay_day or b["start"] == b["end"]:
