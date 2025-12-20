@@ -448,16 +448,22 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         ).add_to(m)
 
     for s in stops:
-        od = "Yes" if s.get("overnight") else "No"
-        popup = f"<b>{s['name']}</b><br>ID: {s['id']}<br>Overnight: {od}"
+        is_overnight = s.get("overnight")
+        # ICONS: Blue Home for Overnight, Gray Pin for day stop
+        if is_overnight:
+            icon = folium.Icon(color="blue", icon="home")
+            od_str = "Sì"
+        else:
+            # "map-pin" is a standard FontAwesome icon, cleaner than "info-sign"
+            icon = folium.Icon(color="gray", icon="map-pin", prefix="fa")
+            od_str = "No"
+            
+        popup = f"<b>{s['name']}</b><br>ID: {s['id']}<br>Notte: {od_str}"
         if s.get("note"):
             popup += f"<br>Note: {s['note']}"
-        icon = folium.Icon(
-            color="blue" if s.get("overnight") else "gray",
-            icon="home" if s.get("overnight") else "info-sign",
-        )
+            
         folium.Marker([s["lat"], s["lon"]], popup=popup, tooltip=s["id"], icon=icon).add_to(m)
-
+        
     for i in range(len(stops) - 1):
         leg = legs_between[i] if i < len(legs_between) else None
         if not leg or not leg.get("geometry_latlon"):
