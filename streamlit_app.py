@@ -83,6 +83,7 @@ DEFAULT_USER_AGENT = "itinerary-planner-cloud/1.0"
 
 
 # ----------------------- Session / DB Sync -----------------------
+
 def get_trip_id_from_url():
     if hasattr(st, "query_params"):
         qp = st.query_params
@@ -93,7 +94,7 @@ def get_trip_id_from_url():
         val = qp["trip_id"]
         return val[0] if isinstance(val, list) else val
     return None
-    
+     
 @st.cache_data(ttl=10, show_spinner=False)
 def get_all_trips_summary():
     """Fetches a list of (id, name) for all trips in DB."""
@@ -219,27 +220,51 @@ def init_state(force_id: str = None):
 
     ss["initialized"] = True
 
+def get_unique_new_trip_name():
+    """Generates 'Il Mio Viaggio', 'Il Mio Viaggio (2)', etc. based on existing trips."""
+    # Fetch existing names to avoid duplicates
+    existing_trips = get_all_trips_summary()
+    existing_names = {t["name"] for t in existing_trips}
+
+    base = "Il Mio Viaggio"
+    if base not in existing_names:
+        return base
+
+    c = 2
+    while True:
+        candidate = f"{base} ({c})"
+        if candidate not in existing_names:
+            return candidate
+        c += 1
+
 def set_defaults():
     ss = st.session_state
-    ss.setdefault("trip_name", "Il Mio Viaggio")
+    
+    # --- DATA RESET (Use '=' to overwrite old trip data) ---
+    ss["trip_name"] = get_unique_new_trip_name()
+    ss["stops"] = []
+    ss["legs_between"] = []
+    ss["trip_start_date"] = date.today()
+    ss["next_stop_id"] = 1
+    ss["map_center"] = None
+    ss["dirty"] = True  # Mark dirty so the new empty trip saves to DB immediately
+    
+    # --- UI STATE RESET ---
+    ss["map_version"] = 0
+    ss["search_lookup"] = {}
+    ss["last_selected_label"] = None
+    ss["search_key_version"] = 0
+    ss["sortable_key_version"] = 0
+    ss["sortable_items_cache"] = None
+    ss["pending_stop"] = None
+    ss["pending_preview"] = None
+    ss["show_editor"] = False
+    ss["editing_stop_idx"] = None
+    
+    # --- PERSISTENT SETTINGS (Keep these if they exist) ---
     ss.setdefault("user_agent", DEFAULT_USER_AGENT)
-    ss.setdefault("trip_start_date", date.today())
-    ss.setdefault("stops", [])
-    ss.setdefault("legs_between", [])
-    ss.setdefault("next_stop_id", 1)
-    ss.setdefault("map_center", None)
-    ss.setdefault("map_version", 0)
-    ss.setdefault("dirty", True)
-    ss.setdefault("search_lookup", {})
-    ss.setdefault("last_selected_label", None)
-    ss.setdefault("search_key_version", 0)
-    ss.setdefault("sortable_key_version", 0)
-    ss.setdefault("sortable_items_cache", None)
-    ss.setdefault("pending_stop", None)
-    ss.setdefault("pending_preview", None)
-    ss.setdefault("show_editor", False)
-    ss.setdefault("editing_stop_idx", None)
-    ss.setdefault("can_edit", False) # Default to Read Only
+    # Don't logout the user if they are already authenticated
+    ss.setdefault("can_edit", False)
 
 def populate_state_from_data(data: dict):
     ss = st.session_state
