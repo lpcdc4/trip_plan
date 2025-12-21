@@ -986,74 +986,73 @@ with st.sidebar:
 
 
 # ----------------------- Main Header -----------------------
-# If Editing, show Inputs
+all_trips = get_all_trips_summary()
+
+# 1. Build Options: Edit Mode = "NEW" + Trips | Read Mode = Trips Only
 if ss.get("can_edit"):
+    trip_options = ["NEW"] + [t["id"] for t in all_trips]
+else:
+    trip_options = [t["id"] for t in all_trips]
+
+def format_trip_option(option_id):
+    if option_id == "NEW":
+        return "➕ Nuovo Viaggio..."
+    for t in all_trips:
+        if t["id"] == option_id:
+            return f"📂 {t['name']}"
+    return option_id
+
+# Determine current index safely
+try:
+    current_idx = trip_options.index(ss["current_trip_id"])
+except ValueError:
+    current_idx = 0
+
+# 2. Layout
+# We place the selector at the top for everyone
+c_sel, c_rest = st.columns([1, 3])
+with c_sel:
+    selected_trip = st.selectbox(
+        "Viaggio", 
+        options=trip_options, 
+        index=current_idx,
+        format_func=format_trip_option,
+        label_visibility="collapsed"
+    )
+
+# Logic: Reload app if selection changes
+if selected_trip != "NEW" and selected_trip != ss["current_trip_id"]:
+    init_state(force_id=selected_trip)
+    if hasattr(st, "query_params"): st.query_params["trip_id"] = selected_trip
+    else: st.experimental_set_query_params(trip_id=selected_trip)
+    st.rerun()
+elif selected_trip == "NEW" and ss["current_trip_id"] in [t["id"] for t in all_trips]:
+    # Only triggers if "NEW" was in the list (Edit mode only)
+    new_id = str(uuid.uuid4())[:8]
+    init_state(force_id=new_id)
+    if hasattr(st, "query_params"): st.query_params["trip_id"] = new_id
+    else: st.experimental_set_query_params(trip_id=new_id)
+    st.rerun()
+
+# 3. Trip Details (Title, Date, ID)
+if ss.get("can_edit"):
+    # --- EDIT MODE LAYOUT ---
     c1, c2, c3 = st.columns([3, 2, 2])
     with c1:
-        # --- TRIP SELECTOR (LOADER) ---
-        all_trips = get_all_trips_summary()
-        
-        # Prepare options: "New" + Existing Trips
-        # We store tuples or dicts? Selectbox works best with lists and a format_func
-        # Let's create a list of IDs to track selection
-        trip_options = ["NEW"] + [t["id"] for t in all_trips]
-        
-        def format_trip_option(option_id):
-            if option_id == "NEW":
-                return "➕ Nuovo Viaggio..."
-            # Find name
-            for t in all_trips:
-                if t["id"] == option_id:
-                    return f"📂 {t['name']}"
-            return option_id
-
-        # Determine current index
-        try:
-            current_idx = trip_options.index(ss["current_trip_id"])
-        except ValueError:
-            current_idx = 0 # Default to New if not in list
-
-        selected_trip = st.selectbox(
-            "Seleziona / Carica Viaggio", 
-            options=trip_options, 
-            index=current_idx,
-            format_func=format_trip_option,
-            key="trip_loader_box"
-        )
-
-        # Logic: If selection changed, reload app
-        if selected_trip != "NEW" and selected_trip != ss["current_trip_id"]:
-            init_state(force_id=selected_trip)
-            # Update URL
-            if hasattr(st, "query_params"): st.query_params["trip_id"] = selected_trip
-            else: st.experimental_set_query_params(trip_id=selected_trip)
-            st.rerun()
-            
-        elif selected_trip == "NEW" and ss["current_trip_id"] in [t["id"] for t in all_trips]:
-            # User selected "NEW" but we are currently on an existing trip -> Start New
-            new_id = str(uuid.uuid4())[:8]
-            init_state(force_id=new_id)
-            if hasattr(st, "query_params"): st.query_params["trip_id"] = new_id
-            else: st.experimental_set_query_params(trip_id=new_id)
-            st.rerun()
-
-        # --- RENAMING INPUT ---
-        new_name = st.text_input("Rinomina viaggio corrente", ss["trip_name"])
+        new_name = st.text_input("Nome Viaggio", ss["trip_name"])
         if new_name != ss["trip_name"]:
             ss["trip_name"] = new_name
             mark_dirty()
-            
     with c2:
-        new_start = st.date_input("Data inizio viaggio", ss["trip_start_date"])
+        new_start = st.date_input("Inizio", ss["trip_start_date"])
         if new_start != ss["trip_start_date"]:
             ss["trip_start_date"] = new_start
             mark_dirty()
     with c3:
         st.text_input("Cloud ID", value=ss['current_trip_id'], disabled=True)
-        st.caption("Condividi questo ID per collaborare.")
-
-# If Read-Only, show Headers
+        st.caption("Condividi ID per collaborare.")
 else:
+    # --- READ-ONLY LAYOUT ---
     st.title(ss["trip_name"])
     st.write(f"📅 **Data Inizio:** {fmt_date(ss['trip_start_date'])}")
 
