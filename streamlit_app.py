@@ -185,8 +185,7 @@ def init_state(force_id: str = None):
         if "initialized" in ss: del ss["initialized"]
         ss["current_trip_id"] = force_id
     
-    # 2. ROBUST CHECK: Only return if initialized AND data exists
-    #    (This fixes your KeyError)
+    # 2. CRITICAL FIX: Only skip if initialized AND 'stops' actually exists
     if "initialized" in ss and "stops" in ss:
         return
 
@@ -214,7 +213,7 @@ def init_state(force_id: str = None):
         populate_state_from_data(data)
     else:
         ss["current_trip_id"] = target_id
-        set_defaults()
+        set_defaults() # Ensure this function sets ss["stops"] = []
 
     # 5. Finalize
     if hasattr(st, "query_params"):
@@ -304,7 +303,18 @@ def populate_state_from_data(data: dict):
 
 def ensure_legs_alignment():
     ss = st.session_state
+    
+    # SAFETY CHECK: If 'stops' is missing, don't crash. 
+    # This prevents the KeyError if init_state failed.
+    if "stops" not in ss:
+        return
+
     needed = max(0, len(ss["stops"]) - 1)
+    
+    # Ensure 'legs_between' list exists
+    if "legs_between" not in ss:
+        ss["legs_between"] = []
+        
     cur = len(ss["legs_between"])
     if cur < needed:
         ss["legs_between"].extend([None] * (needed - cur))
