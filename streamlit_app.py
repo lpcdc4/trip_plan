@@ -186,7 +186,7 @@ def init_state(force_id: str = None):
         ss["current_trip_id"] = force_id
     
     # 2. ROBUST CHECK: Only return if initialized AND data exists
-    #    (This fixes the KeyError by preventing early exit if "stops" is missing)
+    #    (This fixes your KeyError)
     if "initialized" in ss and "stops" in ss:
         return
 
@@ -200,7 +200,7 @@ def init_state(force_id: str = None):
         # Load most recent trip
         existing_trips = get_all_trips_summary()
         if existing_trips:
-            # Sort by last_updated (descending) or use max
+            # Sort by last_updated (descending)
             most_recent = max(existing_trips, key=lambda x: x.get("last_updated", "") or "")
             target_id = most_recent["id"]
         else:
