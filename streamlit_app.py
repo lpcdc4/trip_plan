@@ -436,11 +436,13 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
     for s in stops:
         is_overnight = s.get("overnight")
         if is_overnight:
-            icon = folium.Icon(color="blue", icon="home")
+            # CHANGED: Use 'bed' icon with 'fa' prefix
+            icon = folium.Icon(color="blue", icon="bed", prefix="fa")
             od_str = "Sì"
         else:
             icon = folium.Icon(color="gray", icon="map-pin", prefix="fa")
             od_str = "No"
+  
         
         # CHANGED: Clean popup, no internal IDs
         popup = f"<b>{s['name']}</b><br>Notte: {od_str}"
