@@ -98,19 +98,20 @@ def get_trip_id_from_url():
      
 @st.cache_data(ttl=10, show_spinner=False)
 def get_all_trips_summary():
-    """Fetches a list of (id, name) for all trips in DB."""
+    """Fetches a list of (id, name, last_updated) for all trips in DB."""
     try:
-        # Fetch ID and trip_data. 
-        # Note: We fetch all rows. If you have thousands of trips, this should be paginated/optimized.
         res = supabase.table("itineraries").select("trip_id, trip_data").execute()
         trips = []
         for row in res.data:
             t_data = row.get("trip_data", {})
             name = t_data.get("name", "Senza Nome")
+            # Fetch timestamp, default to empty string if missing
+            last_updated = t_data.get("last_updated", "")
             tid = row.get("trip_id")
             if tid:
-                trips.append({"id": tid, "name": name})
-        # Sort by name
+                trips.append({"id": tid, "name": name, "last_updated": last_updated})
+        
+        # Keep sorting by name for the UI Dropdown list
         trips.sort(key=lambda x: x["name"])
         return trips
     except Exception:
@@ -153,23 +154,8 @@ def save_to_supabase():
         st.warning(f"Sincronizzazione fallita: {e}")
         
 @st.cache_data(ttl=10, show_spinner=False)
-def get_all_trips_summary():
-    """Fetches a list of (id, name) for all trips in DB."""
-    try:
-        # Select ID and the 'name' field inside the JSON
-        res = supabase.table("itineraries").select("trip_id, trip_data").execute()
-        trips = []
-        for row in res.data:
-            t_data = row.get("trip_data", {})
-            name = t_data.get("name", "Senza Nome")
-            tid = row.get("trip_id")
-            if tid:
-                trips.append({"id": tid, "name": name})
-        # Sort alphabetically
-        trips.sort(key=lambda x: x["name"])
-        return trips
-    except Exception:
-        return []
+
+
 
 
 def init_state(force_id: str = None):
@@ -192,35 +178,34 @@ def init_state(force_id: str = None):
         # Case A: URL has an ID -> Use it
         target_id = url_id
     else:
-        # Case B: No URL ID -> Try to find an existing trip in DB
+        # Case B: No URL ID -> Find the LAST UPDATED trip
         existing_trips = get_all_trips_summary()
         if existing_trips:
-            # Load the first existing trip (e.g. "India 2025")
-            target_id = existing_trips[0]["id"]
+            # FIX: Pick the trip with the "biggest" (most recent) date string
+            most_recent = max(existing_trips, key=lambda x: x["last_updated"] or "")
+            target_id = most_recent["id"]
         else:
-            # Case C: No trips in DB at all -> Create a fresh one
+            # Case C: No trips in DB -> Create fresh
             target_id = str(uuid.uuid4())[:8]
 
     # 2. Load Data for the Target ID
     data = load_from_supabase(target_id)
     
     if data:
-        # Found data -> Populate
         ss["current_trip_id"] = target_id
         populate_state_from_data(data)
     else:
-        # No data found (New Trip) -> Set Defaults
         ss["current_trip_id"] = target_id
         set_defaults()
 
-    # 3. Update URL to reflect what we loaded
+    # 3. Update URL
     if hasattr(st, "query_params"):
         st.query_params["trip_id"] = target_id
     else:
         st.experimental_set_query_params(trip_id=target_id)
 
     ss["initialized"] = True
-
+    
 def get_unique_new_trip_name():
     """Generates 'Il Mio Viaggio', 'Il Mio Viaggio (2)', etc. based on existing trips."""
     # Fetch existing names to avoid duplicates
