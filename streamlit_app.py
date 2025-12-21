@@ -25,7 +25,7 @@ from streamlit_searchbox import st_searchbox
 from supabase import create_client, Client
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos  # <--- Add this line
-
+import hashlib
 # ---------- optional drag & drop dependency ----------
 HAS_SORTABLES = False
 sort_items = None
@@ -73,6 +73,25 @@ except Exception:
 # 3. Set Page Config with the dynamic title
 st.set_page_config(page_title=browser_tab_title, layout="wide", page_icon="🗺️")
 
+
+# ==============================================================================
+# SECURITY: TRIP TOKENS
+# ==============================================================================
+def get_trip_token(trip_id: str) -> str:
+    """Generates a secure, unique token for a specific trip ID."""
+    # Use your APP_PIN as the secret 'salt'
+    secret = st.secrets.get("APP_PIN", "default_secret")
+    msg = f"{trip_id}{secret}"
+    # Return first 12 chars of the SHA256 hash
+    return hashlib.sha256(msg.encode()).hexdigest()[:12]
+
+def validate_trip_token(trip_id: str, token: str) -> bool:
+    """Checks if the token provided matches the trip ID."""
+    if not token or not trip_id:
+        return False
+    expected = get_trip_token(trip_id)
+    # Use secure compare to prevent timing attacks
+    return hmac.compare_digest(expected, token)
 # ==============================================================================
 # CONSTANTS & SETUP
 # ==============================================================================
@@ -876,6 +895,71 @@ init_state()
 ensure_legs_alignment()
 ss = st.session_state
 
+
+# ==============================================================================
+# GATEKEEPER (3-Tier Access Control)
+# ==============================================================================
+def check_access():
+    ss = st.session_state
+    
+    # --- TIER 3: ADMIN (Can see/edit everything) ---
+    if ss.get("can_edit"):
+        return True
+
+    # Initialize "Allowed Trips" set for Tier 2 users
+    if "allowed_view_ids" not in ss:
+        ss["allowed_view_ids"] = set()
+
+    # --- TIER 2: LINK ACCESS (Can see specific trip) ---
+    # 1. Get params from URL
+    if hasattr(st, "query_params"):
+        qp = st.query_params
+        url_token = qp.get("token")
+        url_trip = qp.get("trip_id")
+    else:
+        qp = st.experimental_get_query_params()
+        url_token = qp.get("token", [None])[0]
+        url_trip = qp.get("trip_id", [None])[0]
+
+    # 2. Check if URL grants access to a specific trip
+    if url_trip and url_token:
+        if validate_trip_token(url_trip, url_token):
+            ss["allowed_view_ids"].add(url_trip)
+            # If we are viewing the allowed trip, PASS
+            if ss["current_trip_id"] == url_trip:
+                return True
+
+    # 3. Check if we previously authorized this trip in this session
+    if ss["current_trip_id"] in ss["allowed_view_ids"]:
+        return True
+
+    # --- TIER 1: BLOCKED (Show Login) ---
+    st.markdown("### 🔒 Accesso Limitato")
+    st.caption("Inserisci il PIN Amministratore (Tier 3) o un Token Viaggio (Tier 2).")
+    
+    user_input = st.text_input("PIN o Token", type="password")
+    
+    if user_input:
+        # Check A: Is it the Admin PIN? -> Upgrade to Tier 3
+        secret_pin = st.secrets.get("APP_PIN", "0000")
+        if hmac.compare_digest(user_input, str(secret_pin)):
+            ss["can_edit"] = True
+            st.rerun()
+        
+        # Check B: Is it a valid Token for the CURRENT trip? -> Grant Tier 2
+        elif validate_trip_token(ss["current_trip_id"], user_input):
+            ss["allowed_view_ids"].add(ss["current_trip_id"])
+            st.rerun()
+            
+        else:
+            st.error("Accesso negato")
+
+    return False
+
+# STOP APP HERE if access is not granted
+if not check_access():
+    st.stop()
+# ==============================================================================
 # ----------------------- Sidebar: Auth & Tools -----------------------
 with st.sidebar:
     st.header("⚙️ Menu")
@@ -928,8 +1012,22 @@ with st.sidebar:
             mark_dirty() 
             st.success(f"Clonato! ID: {new_id}")
             st.rerun()
-
-    st.divider()
+            
+    #3b SHARE LINK (Only if can_edit)        
+    if ss.get("can_edit"):
+        # In st.sidebar...
+        st.divider()
+        st.markdown("**🔗 Condivisione (Tier 2)**")
+        
+        # Generate Link for CURRENT Trip
+        tid = ss["current_trip_id"]
+        token = get_trip_token(tid)
+        
+        magic_link = f"?trip_id={tid}&token={token}"
+        
+        st.code(magic_link, language="text")
+        st.caption(f"Chi ha questo link può vedere **solo** il viaggio '{ss['trip_name']}', ma non può modificarlo.")
+        st.divider()
     
     # EXPORT (Visible to everyone)
     export_data = {
@@ -945,7 +1043,7 @@ with st.sidebar:
         file_name=f"itinerario_{ss['current_trip_id']}.json",
         mime="application/json"
     )
-
+    
     # IMPORT (Only if can_edit)
     if ss.get("can_edit"):
         uploaded_file = st.file_uploader("⬆️ Importa JSON", type=["json"])
@@ -987,11 +1085,16 @@ with st.sidebar:
 # ----------------------- Main Header -----------------------
 all_trips = get_all_trips_summary()
 
-# 1. Build Options: Edit Mode = "NEW" + Trips | Read Mode = Trips Only
+# 1. FILTER TRIPS based on Access Tier
 if ss.get("can_edit"):
-    trip_options = ["NEW"] + [t["id"] for t in all_trips]
+    # TIER 3 (Admin): See "NEW" + ALL trips
+    available_trips = all_trips
+    trip_options = ["NEW"] + [t["id"] for t in available_trips]
 else:
-    trip_options = [t["id"] for t in all_trips]
+    # TIER 2 (Link): See ONLY trips allowed by token
+    allowed = ss.get("allowed_view_ids", set())
+    available_trips = [t for t in all_trips if t["id"] in allowed]
+    trip_options = [t["id"] for t in available_trips]
 
 def format_trip_option(option_id):
     if option_id == "NEW":
@@ -1007,17 +1110,21 @@ try:
 except ValueError:
     current_idx = 0
 
-# 2. Layout
-# We place the selector at the top for everyone
+# 2. Layout: Selector (Top)
 c_sel, c_rest = st.columns([1, 3])
 with c_sel:
-    selected_trip = st.selectbox(
-        "Viaggio", 
-        options=trip_options, 
-        index=current_idx,
-        format_func=format_trip_option,
-        label_visibility="collapsed"
-    )
+    # Logic: Only show dropdown if user has multiple options
+    if len(trip_options) > 1:
+        selected_trip = st.selectbox(
+            "Viaggio", 
+            options=trip_options, 
+            index=current_idx,
+            format_func=format_trip_option,
+            label_visibility="collapsed"
+        )
+    else:
+        # If single trip access, lock selection to current
+        selected_trip = ss["current_trip_id"]
 
 # Logic: Reload app if selection changes
 if selected_trip != "NEW" and selected_trip != ss["current_trip_id"]:
