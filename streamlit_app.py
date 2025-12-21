@@ -161,34 +161,33 @@ def save_to_supabase():
 def init_state(force_id: str = None):
     ss = st.session_state
     
-    # Reset initialization if forcing a switch
+    # 1. Force reset if switching trips
     if force_id:
         if "initialized" in ss: del ss["initialized"]
         ss["current_trip_id"] = force_id
     
-    if "initialized" in ss:
+    # 2. ROBUST CHECK: Only return if initialized AND data exists
+    #    (This fixes the KeyError by preventing early exit if "stops" is missing)
+    if "initialized" in ss and "stops" in ss:
         return
 
-    # 1. Determine which ID to load
+    # 3. Determine Trip ID
     url_id = force_id or get_trip_id_from_url()
-    
     target_id = None
     
     if url_id:
-        # Case A: URL has an ID -> Use it
         target_id = url_id
     else:
-        # Case B: No URL ID -> Find the LAST UPDATED trip
+        # Load most recent trip
         existing_trips = get_all_trips_summary()
         if existing_trips:
-            # FIX: Pick the trip with the "biggest" (most recent) date string
-            most_recent = max(existing_trips, key=lambda x: x["last_updated"] or "")
+            # Sort by last_updated (descending) or use max
+            most_recent = max(existing_trips, key=lambda x: x.get("last_updated", "") or "")
             target_id = most_recent["id"]
         else:
-            # Case C: No trips in DB -> Create fresh
             target_id = str(uuid.uuid4())[:8]
 
-    # 2. Load Data for the Target ID
+    # 4. Load Data
     data = load_from_supabase(target_id)
     
     if data:
@@ -198,7 +197,7 @@ def init_state(force_id: str = None):
         ss["current_trip_id"] = target_id
         set_defaults()
 
-    # 3. Update URL
+    # 5. Finalize
     if hasattr(st, "query_params"):
         st.query_params["trip_id"] = target_id
     else:
