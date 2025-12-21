@@ -68,7 +68,27 @@ def get_trip_id_from_url():
         val = qp["trip_id"]
         return val[0] if isinstance(val, list) else val
     return None
-
+    
+@st.cache_data(ttl=10, show_spinner=False)
+def get_all_trips_summary():
+    """Fetches a list of (id, name) for all trips in DB."""
+    try:
+        # Fetch ID and trip_data. 
+        # Note: We fetch all rows. If you have thousands of trips, this should be paginated/optimized.
+        res = supabase.table("itineraries").select("trip_id, trip_data").execute()
+        trips = []
+        for row in res.data:
+            t_data = row.get("trip_data", {})
+            name = t_data.get("name", "Senza Nome")
+            tid = row.get("trip_id")
+            if tid:
+                trips.append({"id": tid, "name": name})
+        # Sort by name
+        trips.sort(key=lambda x: x["name"])
+        return trips
+    except Exception:
+        return []
+        
 def load_from_supabase(trip_id: str):
     try:
         response = supabase.table("itineraries").select("trip_data").eq("trip_id", trip_id).execute()
@@ -105,12 +125,19 @@ def save_to_supabase():
     except Exception as e:
         st.warning(f"Sincronizzazione fallita: {e}")
 
-def init_state():
+def init_state(force_id: str = None):
     ss = st.session_state
+    
+    # If forcing a switch, clear initialization to reload data
+    if force_id:
+        if "initialized" in ss: del ss["initialized"]
+        ss["current_trip_id"] = force_id
+    
     if "initialized" in ss:
         return
 
-    url_id = get_trip_id_from_url()
+    # Use force_id if provided, else check URL
+    url_id = force_id or get_trip_id_from_url()
     
     if url_id:
         data = load_from_supabase(url_id)
@@ -118,12 +145,14 @@ def init_state():
             ss["current_trip_id"] = url_id
             populate_state_from_data(data)
         else:
+            # ID not found in DB? Treat as new or fallback
             ss["current_trip_id"] = url_id
             set_defaults()
     else:
         new_id = str(uuid.uuid4())[:8]
         ss["current_trip_id"] = new_id
         set_defaults()
+        # Set URL
         if hasattr(st, "query_params"):
             st.query_params["trip_id"] = new_id
         else:
@@ -868,10 +897,59 @@ with st.sidebar:
 if ss.get("can_edit"):
     c1, c2, c3 = st.columns([3, 2, 2])
     with c1:
-        new_name = st.text_input("Nome viaggio", ss["trip_name"])
+        # --- TRIP SELECTOR (LOADER) ---
+        all_trips = get_all_trips_summary()
+        
+        # Prepare options: "New" + Existing Trips
+        # We store tuples or dicts? Selectbox works best with lists and a format_func
+        # Let's create a list of IDs to track selection
+        trip_options = ["NEW"] + [t["id"] for t in all_trips]
+        
+        def format_trip_option(option_id):
+            if option_id == "NEW":
+                return "➕ Nuovo Viaggio..."
+            # Find name
+            for t in all_trips:
+                if t["id"] == option_id:
+                    return f"📂 {t['name']}"
+            return option_id
+
+        # Determine current index
+        try:
+            current_idx = trip_options.index(ss["current_trip_id"])
+        except ValueError:
+            current_idx = 0 # Default to New if not in list
+
+        selected_trip = st.selectbox(
+            "Seleziona / Carica Viaggio", 
+            options=trip_options, 
+            index=current_idx,
+            format_func=format_trip_option,
+            key="trip_loader_box"
+        )
+
+        # Logic: If selection changed, reload app
+        if selected_trip != "NEW" and selected_trip != ss["current_trip_id"]:
+            init_state(force_id=selected_trip)
+            # Update URL
+            if hasattr(st, "query_params"): st.query_params["trip_id"] = selected_trip
+            else: st.experimental_set_query_params(trip_id=selected_trip)
+            st.rerun()
+            
+        elif selected_trip == "NEW" and ss["current_trip_id"] in [t["id"] for t in all_trips]:
+            # User selected "NEW" but we are currently on an existing trip -> Start New
+            new_id = str(uuid.uuid4())[:8]
+            init_state(force_id=new_id)
+            if hasattr(st, "query_params"): st.query_params["trip_id"] = new_id
+            else: st.experimental_set_query_params(trip_id=new_id)
+            st.rerun()
+
+        # --- RENAMING INPUT ---
+        new_name = st.text_input("Rinomina viaggio corrente", ss["trip_name"])
         if new_name != ss["trip_name"]:
             ss["trip_name"] = new_name
             mark_dirty()
+            
     with c2:
         new_start = st.date_input("Data inizio viaggio", ss["trip_start_date"])
         if new_start != ss["trip_start_date"]:
@@ -879,6 +957,7 @@ if ss.get("can_edit"):
             mark_dirty()
     with c3:
         st.text_input("Cloud ID", value=ss['current_trip_id'], disabled=True)
+        st.caption("Condividi questo ID per collaborare.")
 
 # If Read-Only, show Headers
 else:
