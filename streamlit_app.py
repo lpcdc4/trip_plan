@@ -466,7 +466,15 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
             dash = "8,10"
 
         # CHANGED: Clean tooltip, no IDs
-        tooltip = f"{mode.upper()} · {stops[i]['name']} → {stops[i+1]['name']}"
+        # NEW: Maps to Italian (Auto, Aereo, etc.)
+        mode_map = {
+            "car": "Auto", "bus": "Bus", "train": "Treno", 
+            "plane": "Aereo", "ferry": "Traghetto"
+        }
+        display_mode = mode_map.get(mode, mode.title())
+
+        tooltip = f"{display_mode} · {stops[i]['name']} → {stops[i+1]['name']}"
+        
         if leg.get("duration_s") is not None:
             tooltip += f" · {hhmm_from_seconds(leg['duration_s'])}"
         if leg.get("distance_m") is not None:
