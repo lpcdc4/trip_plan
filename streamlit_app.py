@@ -37,9 +37,40 @@ except Exception:
     sort_items = None
 
 # ==============================================================================
-# CONFIG & AUTH
+# SUPABASE & CONFIG PRE-LOAD
 # ==============================================================================
-st.set_page_config(page_title="Viaggio", layout="wide", page_icon="🗺️")
+# We initialize Supabase early to fetch the Trip Name for the Browser Tab Title
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception:
+    st.error("Missing Supabase secrets. Please set SUPABASE_URL and SUPABASE_KEY.")
+    st.stop()
+
+# Logic to peek at the Trip ID in the URL before the app fully loads
+browser_tab_title = "Viaggio"
+try:
+    # 1. Get ID from URL
+    if hasattr(st, "query_params"):
+        # Streamlit 1.30+
+        pre_id = st.query_params.get("trip_id")
+    else:
+        # Streamlit < 1.30
+        pre_qp = st.experimental_get_query_params()
+        pre_id = pre_qp.get("trip_id", [None])[0]
+
+    # 2. If ID exists, fetch just the name
+    if pre_id:
+        # Lightweight query for title only
+        res = supabase.table("itineraries").select("trip_data").eq("trip_id", pre_id).execute()
+        if res.data and len(res.data) > 0:
+            browser_tab_title = res.data[0]["trip_data"].get("name", "Viaggio")
+except Exception:
+    pass # If any error occurs (DB down, bad ID), keep default title
+
+# 3. Set Page Config with the dynamic title
+st.set_page_config(page_title=browser_tab_title, layout="wide", page_icon="🗺️")
 
 # ==============================================================================
 # CONSTANTS & SETUP
@@ -48,13 +79,7 @@ PHOTON_SEARCH = "https://photon.komoot.io/api/"
 OSRM_ROUTE = "https://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}"
 DEFAULT_USER_AGENT = "itinerary-planner-cloud/1.0"
 
-try:
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except Exception:
-    st.error("Missing Supabase secrets. Please set SUPABASE_URL and SUPABASE_KEY.")
-    st.stop()
+
 
 
 # ----------------------- Session / DB Sync -----------------------
