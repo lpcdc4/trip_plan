@@ -124,11 +124,31 @@ def save_to_supabase():
         ss["dirty"] = False
     except Exception as e:
         st.warning(f"Sincronizzazione fallita: {e}")
+        
+@st.cache_data(ttl=10, show_spinner=False)
+def get_all_trips_summary():
+    """Fetches a list of (id, name) for all trips in DB."""
+    try:
+        # Select ID and the 'name' field inside the JSON
+        res = supabase.table("itineraries").select("trip_id, trip_data").execute()
+        trips = []
+        for row in res.data:
+            t_data = row.get("trip_data", {})
+            name = t_data.get("name", "Senza Nome")
+            tid = row.get("trip_id")
+            if tid:
+                trips.append({"id": tid, "name": name})
+        # Sort alphabetically
+        trips.sort(key=lambda x: x["name"])
+        return trips
+    except Exception:
+        return []
+
 
 def init_state(force_id: str = None):
     ss = st.session_state
     
-    # If forcing a switch, clear initialization to reload data
+    # Reset initialization if forcing a switch
     if force_id:
         if "initialized" in ss: del ss["initialized"]
         ss["current_trip_id"] = force_id
@@ -136,27 +156,41 @@ def init_state(force_id: str = None):
     if "initialized" in ss:
         return
 
-    # Use force_id if provided, else check URL
+    # 1. Determine which ID to load
     url_id = force_id or get_trip_id_from_url()
     
+    target_id = None
+    
     if url_id:
-        data = load_from_supabase(url_id)
-        if data:
-            ss["current_trip_id"] = url_id
-            populate_state_from_data(data)
-        else:
-            # ID not found in DB? Treat as new or fallback
-            ss["current_trip_id"] = url_id
-            set_defaults()
+        # Case A: URL has an ID -> Use it
+        target_id = url_id
     else:
-        new_id = str(uuid.uuid4())[:8]
-        ss["current_trip_id"] = new_id
-        set_defaults()
-        # Set URL
-        if hasattr(st, "query_params"):
-            st.query_params["trip_id"] = new_id
+        # Case B: No URL ID -> Try to find an existing trip in DB
+        existing_trips = get_all_trips_summary()
+        if existing_trips:
+            # Load the first existing trip (e.g. "India 2025")
+            target_id = existing_trips[0]["id"]
         else:
-            st.experimental_set_query_params(trip_id=new_id)
+            # Case C: No trips in DB at all -> Create a fresh one
+            target_id = str(uuid.uuid4())[:8]
+
+    # 2. Load Data for the Target ID
+    data = load_from_supabase(target_id)
+    
+    if data:
+        # Found data -> Populate
+        ss["current_trip_id"] = target_id
+        populate_state_from_data(data)
+    else:
+        # No data found (New Trip) -> Set Defaults
+        ss["current_trip_id"] = target_id
+        set_defaults()
+
+    # 3. Update URL to reflect what we loaded
+    if hasattr(st, "query_params"):
+        st.query_params["trip_id"] = target_id
+    else:
+        st.experimental_set_query_params(trip_id=target_id)
 
     ss["initialized"] = True
 
