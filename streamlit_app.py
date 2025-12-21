@@ -24,6 +24,7 @@ import polyline as polyline_lib
 from streamlit_searchbox import st_searchbox
 from supabase import create_client, Client
 from fpdf import FPDF
+from fpdf.enums import XPos, YPos  # <--- Add this line
 
 # ---------- optional drag & drop dependency ----------
 HAS_SORTABLES = False
@@ -766,35 +767,34 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
     pdf = TripPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
-    # Increased margin to 25mm to prevent footer overlap
     pdf.set_auto_page_break(auto=True, margin=25) 
     
     # 1. TITLE PAGE HEADER
     pdf.set_font("Helvetica", "B", 24)
     safe_name = trip_name.encode('latin-1', 'replace').decode('latin-1')
-    pdf.cell(0, 10, safe_name.upper(), ln=True, align="L")
+    
+    # FIX: Replaced ln=True
+    pdf.cell(0, 10, safe_name.upper(), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="L")
     
     pdf.set_font("Helvetica", "", 12)
     pdf.set_text_color(50, 50, 50)
-    pdf.cell(0, 10, f"Inizio viaggio: {start_date.strftime('%d/%m/%Y')}", ln=True)
+    
+    # FIX: Replaced ln=True
+    pdf.cell(0, 10, f"Inizio viaggio: {start_date.strftime('%d/%m/%Y')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(10)
     
     # 2. GENERATE BLOCKS
     blocks = itinerary_day_blocks(stops, legs)
     
     for b in blocks:
-        # --- SMART PAGE BREAK CHECK (Day Header) ---
-        # A day header needs about 15mm. If we are near the bottom (e.g. > 250mm), 
-        # push to next page to keep header with content.
         if pdf.get_y() > 250: 
             pdf.add_page()
 
         # --- DAY HEADER ---
-        pdf.set_fill_color(240, 240, 240) # Light Grey
+        pdf.set_fill_color(240, 240, 240)
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(0, 0, 0)
         
-        # Calculate Header Text
         date_str = b["date"].strftime("%d/%m/%y")
         
         time_parts = []
@@ -814,10 +814,10 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
         mid_part = f"   |   {' + '.join(time_parts)}" if time_parts else " "
         header_text = f"GIORNO {b['day']}  -  {date_str}{mid_part}"
         
-        # Safe encode
         safe_header = header_text.encode('latin-1', 'replace').decode('latin-1')
         
-        pdf.cell(0, 10, safe_header, ln=True, fill=True, border=False)
+        # FIX: Replaced ln=True
+        pdf.cell(0, 10, safe_header, new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True, border=False)
         pdf.ln(2)
         
         # --- STOPS LOOP ---
@@ -827,57 +827,47 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
             s = stops[i]
             is_overnight = s.get("overnight", False)
             
-            # Content Preparation
             name = s['name'].encode('latin-1', 'replace').decode('latin-1')
             note = s.get('note', '').strip().encode('latin-1', 'replace').decode('latin-1')
             
-            # Height Calculation for this Stop Box
-            # Base height 10, plus extra if note exists
             box_h = 10
             if note: box_h += 6
             
-            # --- SMART PAGE BREAK CHECK (Stop Box) ---
-            # If this specific box won't fit, push to new page
-            # 297mm (A4) - 25mm (margin) = 272mm usable limit
             if pdf.get_y() + box_h > 270:
                 pdf.add_page()
-                # Re-print "Continued" header if you want, or just continue
             
-            # Box Style
             if is_overnight:
                 pdf.set_fill_color(250, 250, 250) 
-                pdf.set_draw_color(0, 0, 0) # Black Border
+                pdf.set_draw_color(0, 0, 0)
                 pdf.set_line_width(0.5)
             else:
                 pdf.set_fill_color(255, 255, 255) 
-                pdf.set_draw_color(180, 180, 180) # Light Border
+                pdf.set_draw_color(180, 180, 180)
                 pdf.set_line_width(0.2)
                 
-            # Draw Box
             x = pdf.get_x()
             y = pdf.get_y()
             pdf.rect(x, y, 190, box_h, 'FD')
             
-            # Text inside box
             pdf.set_xy(x + 3, y + 2)
             pdf.set_font("Helvetica", "B", 11)
             pdf.set_text_color(0, 0, 0)
-            pdf.cell(0, 6, name, ln=True)
+            
+            # FIX: Replaced ln=True
+            pdf.cell(0, 6, name, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
             if note:
                 pdf.set_x(x + 3)
                 pdf.set_font("Helvetica", "I", 9)
                 pdf.set_text_color(80, 80, 80)
-                pdf.cell(0, 5, note, ln=True)
+                # FIX: Replaced ln=True
+                pdf.cell(0, 5, note, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
-            # Reset Cursor for next item
             pdf.set_y(y + box_h + 2) 
             
-            # Draw Leg (if exists and not last in block)
             if i < b["end"]:
                 leg = legs[i]
                 if leg:
-                    # Check space for leg text (needs ~6mm)
                     if pdf.get_y() + 6 > 270:
                         pdf.add_page()
 
@@ -887,10 +877,12 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
                     
                     pdf.set_font("Helvetica", "", 8)
                     pdf.set_text_color(100, 100, 100)
-                    pdf.cell(0, 5, full_leg, ln=True)
+                    
+                    # FIX: Replaced ln=True
+                    pdf.cell(0, 5, full_leg, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                     pdf.ln(1)
                     
-        pdf.ln(4) # Space between days
+        pdf.ln(4)
 
     return bytes(pdf.output())
 
