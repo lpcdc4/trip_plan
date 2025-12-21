@@ -935,7 +935,7 @@ def check_access():
 
     # --- TIER 1: BLOCKED (Show Login) ---
     st.markdown("### 🔒 Accesso Limitato")
-    st.caption("Inserisci il PIN Amministratore (Tier 3) o un Token Viaggio (Tier 2).")
+    st.caption("Inserisci il PIN Amministratore o un Token Viaggio.")
     
     user_input = st.text_input("PIN o Token", type="password")
     
@@ -1017,13 +1017,13 @@ with st.sidebar:
     if ss.get("can_edit"):
         # In st.sidebar...
         st.divider()
-        st.markdown("**🔗 Condivisione (Tier 2)**")
+        st.markdown("**🔗 Condivisione (Sola Lettura)**")
         
         # Generate Link for CURRENT Trip
         tid = ss["current_trip_id"]
         token = get_trip_token(tid)
         
-        magic_link = f"?trip_id={tid}&token={token}"
+        magic_link = "https://itinerari-picaciam.streamlit.app"+f"?trip_id={tid}&token={token}"
         
         st.code(magic_link, language="text")
         st.caption(f"Chi ha questo link può vedere **solo** il viaggio '{ss['trip_name']}', ma non può modificarlo.")
