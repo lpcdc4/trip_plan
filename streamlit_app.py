@@ -948,16 +948,38 @@ with st.sidebar:
     # IMPORT (Only if can_edit)
     if ss.get("can_edit"):
         uploaded_file = st.file_uploader("⬆️ Importa JSON", type=["json"])
+        
         if uploaded_file is not None:
             try:
-                data = json.load(uploaded_file)
-                populate_state_from_data(data)
-                mark_dirty() 
-                st.success("Caricato!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Errore: {e}")
+                # 1. Load the data into memory first
+                new_data = json.load(uploaded_file)
+                
+                # 2. Check if the current trip has existing stops
+                current_stops = ss.get("stops", [])
+                has_existing_data = len(current_stops) > 0
 
+                # 3. Helper function to execute the overwrite
+                def perform_import():
+                    populate_state_from_data(new_data)
+                    mark_dirty() 
+                    st.success("Caricato!")
+                    st.rerun()
+
+                # 4. Logic: Immediate import vs. Confirmation
+                if not has_existing_data:
+                    # Trip is empty, import immediately
+                    perform_import()
+                else:
+                    # Trip has data, ask for confirmation
+                    st.warning(f"⚠️ Il viaggio attuale ha già {len(current_stops)} tappe.")
+                    st.markdown("Importando il file **sovrascriverai** tutto.")
+                    
+                    if st.button("✅ Conferma Sovrascrittura", type="primary", key="confirm_import_btn"):
+                        perform_import()
+
+            except Exception as e:
+                st.error(f"Errore nel file: {e}")
+                
     st.caption(f"ID: `{ss['current_trip_id']}`")
 
 
