@@ -1607,7 +1607,7 @@ if ss["dirty"]:
 # ==============================================================================
 if ss.get("can_edit"):
     st.divider()
-    with st.expander("🚨 Zona Pericolo (Elimina Viaggio)"):
+    with st.expander("Elimina Viaggio"):
         st.write(f"Stai per eliminare: **{ss['trip_name']}**")
         st.caption("Il viaggio verrà nascosto dalla lista, ma rimarrà nel database (potrai ripristinarlo manualmente da Supabase rimuovendo il flag 'is_deleted').")
         
