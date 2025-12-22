@@ -1295,21 +1295,16 @@ if ss.get("can_edit"):
                     is_same_place = True
             
             with st.form("add_stop_form"):
-                c_left, c_right = st.columns(2)
+                # --- CHANGE: Simplified layout, removed "Nome (opzionale)" input ---
+                c_mode, c_dummy = st.columns([1, 1])
                 
-                with c_left:
-                    st.caption("Dettagli Tappa")
-                    name_override = st.text_input("Nome (opzionale)", value="")
-                
-                with c_right:
+                with c_mode:
                     mode = "Auto"
                     leg_note = ""
                     if is_first:
-                        st.caption("Punto di partenza")
-                        st.info("Nessuno spostamento")
+                        st.info("Punto di partenza (Nessuno spostamento)")
                     elif is_same_place:
-                        st.caption("Stesso luogo")
-                        st.info("Nessuno spostamento")
+                        st.info("Stesso luogo (Nessuno spostamento)")
                     else:
                         st.caption(f"Spostamento da {ss['stops'][-1]['name']}")
                         mode = st.selectbox("Mezzo", ["Auto", "Treno", "Aereo", "Bus", "Altro"], index=0)
@@ -1325,7 +1320,8 @@ if ss.get("can_edit"):
 
                 st.write("") 
                 if st.form_submit_button("Aggiungi Tappa", type="primary", use_container_width=True):
-                    final_name = name_override.strip() if name_override.strip() else p["name"]
+                    # --- CHANGE: Use p["name"] directly ---
+                    final_name = p["name"] 
                     add_stop_internal(final_name, p["lat"], p["lon"], overnight, stop_note)
                     
                     if not is_first:
@@ -1342,7 +1338,6 @@ if ss.get("can_edit"):
                     ss["last_selected_label"] = None
                     ss["search_key_version"] += 1
                     st.rerun()
-
 st.divider()
 
 # Map
@@ -1512,19 +1507,22 @@ else:
                                 mark_dirty()
                                 st.rerun()
 
-                    # --- STOP FIELDS ---
+                   # --- STOP FIELDS ---
                     def update_stop(idx=i, k=k_sfx):
-                        ss["stops"][idx]["name"] = st.session_state[f"d_name_{k}"]
+                        # --- CHANGE: Removed name update line ---
                         ss["stops"][idx]["note"] = st.session_state[f"d_note_{k}"]
                         ss["stops"][idx]["overnight"] = st.session_state[f"d_ov_{k}"]
                         mark_dirty()
 
-                    c_nm, c_nt, c_ov = st.columns([2, 3, 1])
-                    with c_nm:
-                        st.text_input("Nome", value=s['name'], key=f"d_name_{k_sfx}", on_change=update_stop)
+                    # --- CHANGE: Removed Name Column, gave more space to Note ---
+                    c_nt, c_ov = st.columns([4, 1])
+                    
                     with c_nt:
                         st.text_input("Note", value=s.get("note", ""), key=f"d_note_{k_sfx}", on_change=update_stop)
                     with c_ov:
+                        # Added a spacer to align checkbox vertically with text input
+                        st.write("")
+                        st.write("") 
                         st.checkbox("Pernottamento", value=s.get("overnight", False), key=f"d_ov_{k_sfx}", on_change=update_stop)
 
                     # --- OUTGOING LEG ---
