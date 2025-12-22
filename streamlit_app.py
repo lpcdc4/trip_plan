@@ -1048,7 +1048,54 @@ with st.sidebar:
         )
     
     # 3. EDIT TOOLS (Only if can_edit)
-    if ss.get("can_edit"):
+    if ss.get("can_edit"):    
+    st.divider()
+    st.markdown("**🛠️ Strumenti**")
+    
+    if st.button("🔄 Aggiorna tutto con Google Maps"):
+        # 1. Setup Progress
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        stops = ss["stops"]
+        legs = ss["legs_between"]
+        total = len(stops) - 1
+        updated_count = 0
+        
+        # 2. Iterate through all legs
+        for i in range(total):
+            leg = legs[i]
+            # Only update "road" legs (ignore flights or empty legs)
+            if leg and leg.get("mode") in {"car", "bus", "train"}:
+                status_text.text(f"Ricalcolo tratta {i+1} di {total}...")
+                
+                A = stops[i]
+                B = stops[i+1]
+                
+                # 3. Call Google API
+                # (Using the google_driving_route function you just added)
+                try:
+                    new_data = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                    
+                    # Optional: Mark source if you added the badge logic
+                    new_data["source"] = "google"
+                    
+                    # Update the leg in place
+                    leg.update(new_data)
+                    updated_count += 1
+                except Exception as e:
+                    st.warning(f"Errore tratta {i+1}: {e}")
+            
+            # Update bar
+            progress_bar.progress((i + 1) / total)
+            
+        # 3. Save & Finish
+        status_text.text("Salvataggio in corso...")
+        mark_dirty()
+        save_to_supabase() # Force immediate save so you don't lose the API data
+        status_text.success(f"Fatto! {updated_count} tratte aggiornate.")
+        st.rerun()
+        
         st.divider()
         st.markdown("**Gestione**")
         if st.button("©️ Clona Viaggio"):
