@@ -1,9 +1,9 @@
 # streamlit_app.py
 #
-# Streamlit itinerary planner (Photon + OSRM) + Supabase Sync + PIN Protection
+# Streamlit itinerary planner (Photon Search + Google Maps Routing) + Supabase Sync + PIN Protection
 #
 # Install:
-#   pip install streamlit folium streamlit-folium requests polyline streamlit-searchbox streamlit-sortables supabase fpdf2
+#   pip install streamlit folium streamlit-folium requests polyline streamlit-searchbox streamlit-sortables supabase fpdf2 googlemaps
 #
 # Run:
 #   streamlit run streamlit_app.py
@@ -24,11 +24,9 @@ import polyline as polyline_lib
 from streamlit_searchbox import st_searchbox
 from supabase import create_client, Client
 from fpdf import FPDF
-from fpdf.enums import XPos, YPos  # <--- Add this line
+from fpdf.enums import XPos, YPos
 import hashlib
-import googlemaps # <--- Make sure to import this
-
-
+import googlemaps 
 
 # ---------- optional drag & drop dependency ----------
 HAS_SORTABLES = False
@@ -44,7 +42,6 @@ except Exception:
 # ==============================================================================
 # SUPABASE & CONFIG PRE-LOAD
 # ==============================================================================
-# We initialize Supabase early to fetch the Trip Name for the Browser Tab Title
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -65,25 +62,19 @@ except Exception:
 # Logic to peek at the Trip ID in the URL before the app fully loads
 browser_tab_title = "Viaggio"
 try:
-    # 1. Get ID from URL
     if hasattr(st, "query_params"):
-        # Streamlit 1.30+
         pre_id = st.query_params.get("trip_id")
     else:
-        # Streamlit < 1.30
         pre_qp = st.experimental_get_query_params()
         pre_id = pre_qp.get("trip_id", [None])[0]
 
-    # 2. If ID exists, fetch just the name
     if pre_id:
-        # Lightweight query for title only
         res = supabase.table("itineraries").select("trip_data").eq("trip_id", pre_id).execute()
         if res.data and len(res.data) > 0:
             browser_tab_title = res.data[0]["trip_data"].get("name", "Viaggio")
 except Exception:
-    pass # If any error occurs (DB down, bad ID), keep default title
+    pass 
 
-# 3. Set Page Config with the dynamic title
 st.set_page_config(page_title=browser_tab_title, layout="wide", page_icon="🗺️")
 
 
@@ -91,32 +82,24 @@ st.set_page_config(page_title=browser_tab_title, layout="wide", page_icon="🗺�
 # SECURITY: TRIP TOKENS
 # ==============================================================================
 def get_trip_token(trip_id: str) -> str:
-    """Generates a secure, unique token for a specific trip ID."""
-    # Use your APP_PIN as the secret 'salt'
     secret = st.secrets.get("APP_PIN", "default_secret")
     msg = f"{trip_id}{secret}"
-    # Return first 12 chars of the SHA256 hash
     return hashlib.sha256(msg.encode()).hexdigest()[:12]
 
 def validate_trip_token(trip_id: str, token: str) -> bool:
-    """Checks if the token provided matches the trip ID."""
     if not token or not trip_id:
         return False
     expected = get_trip_token(trip_id)
-    # Use secure compare to prevent timing attacks
     return hmac.compare_digest(expected, token)
+
 # ==============================================================================
 # CONSTANTS & SETUP
 # ==============================================================================
 PHOTON_SEARCH = "https://photon.komoot.io/api/"
-OSRM_ROUTE = "https://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}"
 DEFAULT_USER_AGENT = "itinerary-planner-cloud/1.0"
 
 
-
-
 # ----------------------- Session / DB Sync -----------------------
-
 def get_trip_id_from_url():
     if hasattr(st, "query_params"):
         qp = st.query_params
@@ -129,28 +112,19 @@ def get_trip_id_from_url():
     return None
      
 @st.cache_data(ttl=10, show_spinner=False)
-@st.cache_data(ttl=10, show_spinner=False)
 def get_all_trips_summary():
-    """Fetches a list of (id, name, last_updated) for all trips in DB."""
     try:
         res = supabase.table("itineraries").select("trip_id, trip_data").execute()
         trips = []
         for row in res.data:
             t_data = row.get("trip_data", {})
-            
-            # --- NEW: Filter out soft-deleted trips ---
             if t_data.get("is_deleted") is True:
                 continue
-            # ------------------------------------------
-
             name = t_data.get("name", "Senza Nome")
-            # Fetch timestamp, default to empty string if missing
             last_updated = t_data.get("last_updated", "")
             tid = row.get("trip_id")
             if tid:
                 trips.append({"id": tid, "name": name, "last_updated": last_updated})
-        
-        # Keep sorting by name for the UI Dropdown list
         trips.sort(key=lambda x: x["name"])
         return trips
     except Exception:
@@ -167,7 +141,6 @@ def load_from_supabase(trip_id: str):
 
 def save_to_supabase():
     ss = st.session_state
-    # Only save if dirty AND we have edit permission (safety check)
     if not ss.get("dirty", False):
         return
     if not ss.get("can_edit", False):
@@ -191,41 +164,30 @@ def save_to_supabase():
         ss["dirty"] = False
     except Exception as e:
         st.warning(f"Sincronizzazione fallita: {e}")
-        
-@st.cache_data(ttl=10, show_spinner=False)
-
-
-
 
 def init_state(force_id: str = None):
     ss = st.session_state
     
-    # 1. Force reset if switching trips
     if force_id:
         if "initialized" in ss: del ss["initialized"]
         ss["current_trip_id"] = force_id
     
-    # 2. CRITICAL FIX: Only skip if initialized AND 'stops' actually exists
     if "initialized" in ss and "stops" in ss:
         return
 
-    # 3. Determine Trip ID
     url_id = force_id or get_trip_id_from_url()
     target_id = None
     
     if url_id:
         target_id = url_id
     else:
-        # Load most recent trip
         existing_trips = get_all_trips_summary()
         if existing_trips:
-            # Sort by last_updated (descending)
             most_recent = max(existing_trips, key=lambda x: x.get("last_updated", "") or "")
             target_id = most_recent["id"]
         else:
             target_id = str(uuid.uuid4())[:8]
 
-    # 4. Load Data
     data = load_from_supabase(target_id)
     
     if data:
@@ -233,9 +195,8 @@ def init_state(force_id: str = None):
         populate_state_from_data(data)
     else:
         ss["current_trip_id"] = target_id
-        set_defaults() # Ensure this function sets ss["stops"] = []
+        set_defaults() 
 
-    # 5. Finalize
     if hasattr(st, "query_params"):
         st.query_params["trip_id"] = target_id
     else:
@@ -244,8 +205,6 @@ def init_state(force_id: str = None):
     ss["initialized"] = True
     
 def get_unique_new_trip_name():
-    """Generates 'Il Mio Viaggio', 'Il Mio Viaggio (2)', etc. based on existing trips."""
-    # Fetch existing names to avoid duplicates
     existing_trips = get_all_trips_summary()
     existing_names = {t["name"] for t in existing_trips}
 
@@ -262,31 +221,23 @@ def get_unique_new_trip_name():
 
 def set_defaults():
     ss = st.session_state
-    
-    # --- DATA RESET (Use '=' to overwrite old trip data) ---
     ss["trip_name"] = get_unique_new_trip_name()
     ss["stops"] = []
     ss["legs_between"] = []
     ss["trip_start_date"] = date.today()
     ss["next_stop_id"] = 1
     ss["map_center"] = None
-    ss["dirty"] = True  # Mark dirty so the new empty trip saves to DB immediately
-    
-    # --- UI STATE RESET ---
+    ss["dirty"] = True
     ss["map_version"] = 0
     ss["search_lookup"] = {}
     ss["last_selected_label"] = None
     ss["search_key_version"] = 0
     ss["sortable_key_version"] = 0
-    ss["sortable_items_cache"] = None
     ss["pending_stop"] = None
     ss["pending_preview"] = None
     ss["show_editor"] = False
     ss["editing_stop_idx"] = None
-    
-    # --- PERSISTENT SETTINGS (Keep these if they exist) ---
     ss.setdefault("user_agent", DEFAULT_USER_AGENT)
-    # Don't logout the user if they are already authenticated
     ss.setdefault("can_edit", False)
 
 def populate_state_from_data(data: dict):
@@ -323,15 +274,9 @@ def populate_state_from_data(data: dict):
 
 def ensure_legs_alignment():
     ss = st.session_state
-    
-    # SAFETY CHECK: If 'stops' is missing, don't crash. 
-    # This prevents the KeyError if init_state failed.
     if "stops" not in ss:
         return
-
     needed = max(0, len(ss["stops"]) - 1)
-    
-    # Ensure 'legs_between' list exists
     if "legs_between" not in ss:
         ss["legs_between"] = []
         
@@ -353,15 +298,17 @@ def day_to_date(day_num: int) -> date:
     return st.session_state["trip_start_date"] + timedelta(days=int(day_num) - 1)
 
 def fmt_date(d: Optional[date]) -> str:
-    # DD/MM/YY
     return d.strftime("%d/%m/%y") if d else ""
 
 
-# ----------------------- External calls -----------------------
+# ----------------------- External calls (SEARCH & GOOGLE) -----------------------
 @st.cache_data(ttl=3600, show_spinner=False)
-@st.cache_data(ttl=3600, show_spinner=False)
-def forward_search(query: str, user_agent: str, limit: int = 15) -> List[Dict]:
-    if len(query) < 2:
+def fetch_locations_v2(query: str, user_agent: str, limit: int = 15) -> List[Dict]:
+    """
+    V2 Search: Fetches raw location data and creates a full descriptive name.
+    Strictly prioritized: Name > Street > City
+    """
+    if not query or len(query) < 2:
         return []
 
     params = {"q": query, "limit": limit, "lang": "it"}
@@ -378,21 +325,25 @@ def forward_search(query: str, user_agent: str, limit: int = 15) -> List[Dict]:
             coords = feature.get("geometry", {}).get("coordinates", [])
             
             if len(coords) == 2:
-                # 1. Build the full "Search Engine Name"
-                # e.g. "Colosseum, Rome, Lazio, Italy"
-                name = props.get("name")
+                # Robust Name Builder
+                main_name = props.get("name") or props.get("street") or props.get("city")
+                if not main_name:
+                    continue
+
+                # Build full string
                 city = props.get("city")
                 state = props.get("state")
                 country = props.get("country")
                 
-                parts = [p for p in [name, city, state, country] if p]
+                parts = [main_name]
+                if city and city != main_name: parts.append(city)
+                if state: parts.append(state)
+                if country: parts.append(country)
+                
                 display_name = ", ".join(parts)
                 
-                if not display_name:
-                    continue
-                
                 results.append({
-                    "name": display_name,  # <--- The full string is now the 'name'
+                    "name": display_name,
                     "lat": float(coords[1]),
                     "lon": float(coords[0]),
                 })
@@ -404,12 +355,8 @@ def forward_search(query: str, user_agent: str, limit: int = 15) -> List[Dict]:
 def google_driving_route(lat1: float, lon1: float, lat2: float, lon2: float) -> Dict:
     """
     Fetches driving route from Google Maps Directions API.
-    Returns the same structure as the old OSRM function for compatibility.
     """
     try:
-        # Request driving directions
-        # mode="driving" is default, but explicit is safer
-        # departure_time="now" ensures traffic data is used (if available)
         directions = gmaps.directions(
             origin=(lat1, lon1),
             destination=(lat2, lon2),
@@ -422,19 +369,15 @@ def google_driving_route(lat1: float, lon1: float, lat2: float, lon2: float) -> 
 
         route = directions[0]
         leg = route['legs'][0]
-
-        # Google returns an encoded polyline for the 'overview_polyline'
-        # We need to decode it to a list of (lat, lon) for Folium
         encoded_poly = route['overview_polyline']['points']
         coords_latlon = polyline_lib.decode(encoded_poly)
 
         return {
-            "distance_m": float(leg['distance']['value']),  # meters
-            "duration_s": float(leg['duration']['value']),  # seconds
+            "distance_m": float(leg['distance']['value']),
+            "duration_s": float(leg['duration']['value']),
             "geometry_latlon": coords_latlon,
         }
-    except Exception as e:
-        # Fallback to straight line if API fails or quota exceeded
+    except Exception:
         return {
             "distance_m": None, 
             "duration_s": None,
@@ -468,7 +411,6 @@ def hhmm_from_seconds(seconds: Optional[float]) -> Optional[str]:
         return None
     h = total_minutes // 60
     m = total_minutes % 60
-    # No leading zero on hours: 2h13m
     return f"{h}h{m:02d}m"
 
 
@@ -476,7 +418,6 @@ def driving_seconds_for_leg(leg: Optional[Dict]) -> int:
     if not leg:
         return 0
     mode = (leg.get("mode") or "").lower()
-    # CHANGED: Only count car/auto as "Driving" time
     if mode in {"car", "auto"} and leg.get("duration_s") is not None:
         try:
             return int(round(float(leg["duration_s"])))
@@ -572,15 +513,12 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
     for s in stops:
         is_overnight = s.get("overnight")
         if is_overnight:
-            # CHANGED: Use 'bed' icon with 'fa' prefix
             icon = folium.Icon(color="blue", icon="bed", prefix="fa")
             od_str = "Sì"
         else:
             icon = folium.Icon(color="gray", icon="map-pin", prefix="fa")
             od_str = "No"
-  
         
-        # CHANGED: Clean popup, no internal IDs
         popup = f"<b>{s['name']}</b><br>Notte: {od_str}"
         if s.get("note"):
             popup += f"<br>Note: {s['note']}"
@@ -601,8 +539,6 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         elif mode == "plane":
             dash = "8,10"
 
-        # CHANGED: Clean tooltip, no IDs
-        # NEW: Maps to Italian (Auto, Aereo, etc.)
         mode_map = {
             "car": "Auto", "bus": "Bus", "train": "Treno", 
             "plane": "Aereo", "ferry": "Traghetto"
@@ -695,7 +631,6 @@ def apply_stop_reorder(new_order_ids: List[str]):
     if set(new_order_ids) != set(id_to_stop.keys()):
         return
 
-    # old adjacency -> leg
     leg_map: Dict[Tuple[str, str], Dict] = {}
     for i in range(len(old_stops) - 1):
         leg = old_legs[i] if i < len(old_legs) else None
@@ -714,7 +649,7 @@ def apply_stop_reorder(new_order_ids: List[str]):
             new_legs.append(kept)
             continue
 
-        # Default to car and auto-route
+        # Force Google Routing on Reorder
         A = new_stops[i]
         B = new_stops[i + 1]
         try:
@@ -758,16 +693,14 @@ def search_api_labels(query: str) -> List[str]:
     
     ua = ss.get("user_agent", DEFAULT_USER_AGENT)
     
-    results = forward_search(q, ua, limit=10)
+    # Use V2 (Robust Name)
+    results = fetch_locations_v2(q, ua, limit=10)
     
     lookup: Dict[str, Dict] = {}
     labels: List[str] = []
-    
     for r in results:
-        # 2. Use the Search Engine Name directly
-        # No "while label in lookup" loops. No adding (2).
+        # PURE SEARCH NAME ONLY
         label = r["name"]
-        
         lookup[label] = r
         if label not in labels:
             labels.append(label)
@@ -784,7 +717,6 @@ def stop_row_html(s: Dict) -> str:
     badge = "🌙 Pernottamento" if overnight else ""
     note = (s.get("note") or "").strip()
     note_html = f"<div style='margin-top:6px;color:#444;font-size:0.92rem;'><em>{note}</em></div>" if note else ""
-    # CHANGED: No S1/S2 ID shown
     return f"""
     <div style="background:{bg};border:1px solid {border};border-radius:12px;padding:12px 14px;margin:8px 0;">
       <div style="display:flex;gap:10px;align-items:baseline;justify-content:space-between;">
@@ -798,18 +730,15 @@ def stop_row_html(s: Dict) -> str:
 # ----------------------- PDF Generator (Fixed Layout) -----------------------
 class TripPDF(FPDF):
     def header(self):
-        # Only show header on pages after the first one
         if self.page_no() > 1:
             self.set_font("Helvetica", "I", 8)
             self.set_text_color(128, 128, 128)
             name = st.session_state.get("trip_name", "Viaggio")
-            # Safe encode
             safe_name = name.encode('latin-1', 'replace').decode('latin-1')
             self.cell(0, 10, safe_name, border=False, align="R")
             self.ln(10)
 
     def footer(self):
-        # Position at 1.5 cm from bottom
         self.set_y(-15)
         self.set_font("Helvetica", "I", 8)
         self.set_text_color(128, 128, 128)
@@ -821,34 +750,26 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=25) 
     
-    # 1. TITLE PAGE HEADER
     pdf.set_font("Helvetica", "B", 24)
     safe_name = trip_name.encode('latin-1', 'replace').decode('latin-1')
-    
-    # FIX: Replaced ln=True
     pdf.cell(0, 10, safe_name.upper(), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="L")
     
     pdf.set_font("Helvetica", "", 12)
     pdf.set_text_color(50, 50, 50)
-    
-    # FIX: Replaced ln=True
     pdf.cell(0, 10, f"Inizio viaggio: {start_date.strftime('%d/%m/%Y')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(10)
     
-    # 2. GENERATE BLOCKS
     blocks = itinerary_day_blocks(stops, legs)
     
     for b in blocks:
         if pdf.get_y() > 250: 
             pdf.add_page()
 
-        # --- DAY HEADER ---
         pdf.set_fill_color(240, 240, 240)
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(0, 0, 0)
         
         date_str = b["date"].strftime("%d/%m/%y")
-        
         time_parts = []
         if b["drive_seconds"] > 0: 
             time_parts.append(f"Guida ({hhmm_from_seconds(b['drive_seconds'])})")
@@ -865,26 +786,20 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
         
         mid_part = f"   |   {' + '.join(time_parts)}" if time_parts else " "
         header_text = f"GIORNO {b['day']}  -  {date_str}{mid_part}"
-        
         safe_header = header_text.encode('latin-1', 'replace').decode('latin-1')
         
-        # FIX: Replaced ln=True
         pdf.cell(0, 10, safe_header, new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True, border=False)
         pdf.ln(2)
         
-        # --- STOPS LOOP ---
         pdf.set_font("Helvetica", "", 11)
-        
         for i in range(b["start"], b["end"] + 1):
             s = stops[i]
             is_overnight = s.get("overnight", False)
-            
             name = s['name'].encode('latin-1', 'replace').decode('latin-1')
             note = s.get('note', '').strip().encode('latin-1', 'replace').decode('latin-1')
             
             box_h = 10
             if note: box_h += 6
-            
             if pdf.get_y() + box_h > 270:
                 pdf.add_page()
             
@@ -904,15 +819,12 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
             pdf.set_xy(x + 3, y + 2)
             pdf.set_font("Helvetica", "B", 11)
             pdf.set_text_color(0, 0, 0)
-            
-            # FIX: Replaced ln=True
             pdf.cell(0, 6, name, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
             if note:
                 pdf.set_x(x + 3)
                 pdf.set_font("Helvetica", "I", 9)
                 pdf.set_text_color(80, 80, 80)
-                # FIX: Replaced ln=True
                 pdf.cell(0, 5, note, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
             pdf.set_y(y + box_h + 2) 
@@ -922,20 +834,14 @@ def generate_pdf_bytes(trip_name, start_date, stops, legs):
                 if leg:
                     if pdf.get_y() + 6 > 270:
                         pdf.add_page()
-
                     summ = leg_summary(leg)
                     lnote = f" ({leg['note']})" if leg.get("note") else ""
                     full_leg = f"      |   {summ}{lnote}".encode('latin-1', 'replace').decode('latin-1')
-                    
                     pdf.set_font("Helvetica", "", 8)
                     pdf.set_text_color(100, 100, 100)
-                    
-                    # FIX: Replaced ln=True
                     pdf.cell(0, 5, full_leg, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                     pdf.ln(1)
-                    
         pdf.ln(4)
-
     return bytes(pdf.output())
 
 
@@ -944,23 +850,16 @@ init_state()
 ensure_legs_alignment()
 ss = st.session_state
 
-
 # ==============================================================================
-# GATEKEEPER (3-Tier Access Control)
+# GATEKEEPER
 # ==============================================================================
 def check_access():
     ss = st.session_state
-    
-    # --- TIER 3: ADMIN (Can see/edit everything) ---
     if ss.get("can_edit"):
         return True
-
-    # Initialize "Allowed Trips" set for Tier 2 users
     if "allowed_view_ids" not in ss:
         ss["allowed_view_ids"] = set()
 
-    # --- TIER 2: LINK ACCESS (Can see specific trip) ---
-    # 1. Get params from URL
     if hasattr(st, "query_params"):
         qp = st.query_params
         url_token = qp.get("token")
@@ -970,51 +869,39 @@ def check_access():
         url_token = qp.get("token", [None])[0]
         url_trip = qp.get("trip_id", [None])[0]
 
-    # 2. Check if URL grants access to a specific trip
     if url_trip and url_token:
         if validate_trip_token(url_trip, url_token):
             ss["allowed_view_ids"].add(url_trip)
-            # If we are viewing the allowed trip, PASS
             if ss["current_trip_id"] == url_trip:
                 return True
 
-    # 3. Check if we previously authorized this trip in this session
-    # 3. Check if we previously authorized this trip in this session
-    # Use .get() to avoid crashing if current_trip_id hasn't been set yet
     if ss.get("current_trip_id") and ss.get("current_trip_id") in ss.get("allowed_view_ids", set()):
         return True
-    # --- TIER 1: BLOCKED (Show Login) ---
+
     st.markdown("### 🔒 Accesso Limitato")
     st.caption("Inserisci il PIN Amministratore o un Token Viaggio.")
-    
     user_input = st.text_input("PIN o Token", type="password")
     
     if user_input:
-        # Check A: Is it the Admin PIN? -> Upgrade to Tier 3
         secret_pin = st.secrets.get("APP_PIN", "0000")
         if hmac.compare_digest(user_input, str(secret_pin)):
             ss["can_edit"] = True
             st.rerun()
-        
-        # Check B: Is it a valid Token for the CURRENT trip? -> Grant Tier 2
         elif validate_trip_token(ss["current_trip_id"], user_input):
             ss["allowed_view_ids"].add(ss["current_trip_id"])
             st.rerun()
-            
         else:
             st.error("Accesso negato")
-
     return False
 
-# STOP APP HERE if access is not granted
 if not check_access():
     st.stop()
+
 # ==============================================================================
-# ----------------------- Sidebar: Auth & Tools -----------------------
+# ----------------------- Sidebar -----------------------
 with st.sidebar:
     st.header("⚙️ Menu")
     
-    # 1. AUTHENTICATION (Login/Logout)
     if not ss.get("can_edit"):
         with st.expander("🔐 Accesso Modifiche", expanded=True):
             def password_entered():
@@ -1024,7 +911,6 @@ with st.sidebar:
                     st.session_state["pin_input"] = ""
                 else:
                     st.error("PIN Errato")
-            
             st.text_input("Inserisci PIN", type="password", key="pin_input", on_change=password_entered)
     else:
         st.success(f"🔓 Modifica Attiva")
@@ -1034,7 +920,6 @@ with st.sidebar:
 
     st.divider()
 
-    # 2. PDF DOWNLOAD (Replaces Print Toggle)
     if ss.get("stops"):
         pdf_data = generate_pdf_bytes(
             ss["trip_name"], 
@@ -1049,53 +934,34 @@ with st.sidebar:
             mime="application/pdf"
         )
     
-    # 3. EDIT TOOLS (Only if can_edit)
     if ss.get("can_edit"):    
-    
         st.divider()
         st.markdown("**🛠️ Strumenti**")
     
         if st.button("🔄 Aggiorna tutto con Google Maps"):
-            # 1. Setup Progress
             progress_bar = st.progress(0)
             status_text = st.empty()
-        
             stops = ss["stops"]
             legs = ss["legs_between"]
             total = len(stops) - 1
             updated_count = 0
-        
-            # 2. Iterate through all legs
             for i in range(total):
                 leg = legs[i]
-                # Only update "road" legs (ignore flights or empty legs)
                 if leg and leg.get("mode") in {"car", "bus", "train"}:
                     status_text.text(f"Ricalcolo tratta {i+1} di {total}...")
-                    
                     A = stops[i]
                     B = stops[i+1]
-                    
-                    # 3. Call Google API
-                    # (Using the google_driving_route function you just added)
                     try:
                         new_data = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                        
-                        # Optional: Mark source if you added the badge logic
                         new_data["source"] = "google"
-                        
-                        # Update the leg in place
                         leg.update(new_data)
                         updated_count += 1
                     except Exception as e:
                         st.warning(f"Errore tratta {i+1}: {e}")
-                
-                # Update bar
                 progress_bar.progress((i + 1) / total)
-                
-            # 3. Save & Finish
             status_text.text("Salvataggio in corso...")
             mark_dirty()
-            save_to_supabase() # Force immediate save so you don't lose the API data
+            save_to_supabase() 
             status_text.success(f"Fatto! {updated_count} tratte aggiornate.")
             st.rerun()
             
@@ -1111,23 +977,16 @@ with st.sidebar:
             st.success(f"Clonato! ID: {new_id}")
             st.rerun()
             
-    #3b SHARE LINK (Only if can_edit)        
     if ss.get("can_edit"):
-        # In st.sidebar...
         st.divider()
         st.markdown("**🔗 Condivisione (Sola Lettura)**")
-        
-        # Generate Link for CURRENT Trip
         tid = ss["current_trip_id"]
         token = get_trip_token(tid)
-        
         magic_link = "https://itinerari-picaciam.streamlit.app"+f"?trip_id={tid}&token={token}"
-        
         st.code(magic_link, language="text")
-        st.caption(f"Chi ha questo link può vedere **solo** il viaggio '{ss['trip_name']}', ma non può modificarlo.")
+        st.caption(f"Chi ha questo link può vedere **solo** il viaggio '{ss['trip_name']}'.")
         st.divider()
     
-    # EXPORT (Visible to everyone)
     export_data = {
         "name": ss["trip_name"],
         "trip_start_date": ss["trip_start_date"].isoformat(),
@@ -1142,38 +1001,27 @@ with st.sidebar:
         mime="application/json"
     )
     
-    # IMPORT (Only if can_edit)
     if ss.get("can_edit"):
         uploaded_file = st.file_uploader("⬆️ Importa JSON", type=["json"])
-        
         if uploaded_file is not None:
             try:
-                # 1. Load the data into memory first
                 new_data = json.load(uploaded_file)
-                
-                # 2. Check if the current trip has existing stops
                 current_stops = ss.get("stops", [])
                 has_existing_data = len(current_stops) > 0
 
-                # 3. Helper function to execute the overwrite
                 def perform_import():
                     populate_state_from_data(new_data)
                     mark_dirty() 
                     st.success("Caricato!")
                     st.rerun()
 
-                # 4. Logic: Immediate import vs. Confirmation
                 if not has_existing_data:
-                    # Trip is empty, import immediately
                     perform_import()
                 else:
-                    # Trip has data, ask for confirmation
                     st.warning(f"⚠️ Il viaggio attuale ha già {len(current_stops)} tappe.")
                     st.markdown("Importando il file **sovrascriverai** tutto.")
-                    
                     if st.button("✅ Conferma Sovrascrittura", type="primary", key="confirm_import_btn"):
                         perform_import()
-
             except Exception as e:
                 st.error(f"Errore nel file: {e}")
                 
@@ -1182,14 +1030,10 @@ with st.sidebar:
 
 # ----------------------- Main Header -----------------------
 all_trips = get_all_trips_summary()
-
-# 1. FILTER TRIPS based on Access Tier
 if ss.get("can_edit"):
-    # TIER 3 (Admin): See "NEW" + ALL trips
     available_trips = all_trips
     trip_options = ["NEW"] + [t["id"] for t in available_trips]
 else:
-    # TIER 2 (Link): See ONLY trips allowed by token
     allowed = ss.get("allowed_view_ids", set())
     available_trips = [t for t in all_trips if t["id"] in allowed]
     trip_options = [t["id"] for t in available_trips]
@@ -1202,16 +1046,13 @@ def format_trip_option(option_id):
             return f"📂 {t['name']}"
     return option_id
 
-# Determine current index safely
 try:
     current_idx = trip_options.index(ss["current_trip_id"])
 except ValueError:
     current_idx = 0
 
-# 2. Layout: Selector (Top)
 c_sel, c_rest = st.columns([1, 3])
 with c_sel:
-    # Logic: Only show dropdown if user has multiple options
     if len(trip_options) > 1:
         selected_trip = st.selectbox(
             "Viaggio", 
@@ -1221,26 +1062,21 @@ with c_sel:
             label_visibility="collapsed"
         )
     else:
-        # If single trip access, lock selection to current
         selected_trip = ss["current_trip_id"]
 
-# Logic: Reload app if selection changes
 if selected_trip != "NEW" and selected_trip != ss["current_trip_id"]:
     init_state(force_id=selected_trip)
     if hasattr(st, "query_params"): st.query_params["trip_id"] = selected_trip
     else: st.experimental_set_query_params(trip_id=selected_trip)
     st.rerun()
 elif selected_trip == "NEW" and ss["current_trip_id"] in [t["id"] for t in all_trips]:
-    # Only triggers if "NEW" was in the list (Edit mode only)
     new_id = str(uuid.uuid4())[:8]
     init_state(force_id=new_id)
     if hasattr(st, "query_params"): st.query_params["trip_id"] = new_id
     else: st.experimental_set_query_params(trip_id=new_id)
     st.rerun()
 
-# 3. Trip Details (Title, Date, ID)
 if ss.get("can_edit"):
-    # --- EDIT MODE LAYOUT ---
     c1, c2, c3 = st.columns([3, 2, 2])
     with c1:
         new_name = st.text_input("Nome Viaggio", ss["trip_name"])
@@ -1256,7 +1092,6 @@ if ss.get("can_edit"):
         st.text_input("Cloud ID", value=ss['current_trip_id'], disabled=True)
         st.caption("Condividi ID per collaborare.")
 else:
-    # --- READ-ONLY LAYOUT ---
     st.title(ss["trip_name"])
     st.write(f"📅 **Data Inizio:** {fmt_date(ss['trip_start_date'])}")
 
@@ -1275,13 +1110,11 @@ if ss.get("can_edit"):
     if selected_label:
         selection = ss.get("search_lookup", {}).get(selected_label)
 
-    # 1. Update Preview if selection changes
     if selection and selected_label != ss["last_selected_label"]:
         ss["last_selected_label"] = selected_label
         ss["pending_preview"] = {"name": selection["name"], "lat": selection["lat"], "lon": selection["lon"]}
         ss["map_center"] = (selection["lat"], selection["lon"])
 
-    # 2. Unified Add Form (Aligned)
     if ss["pending_preview"]:
         p = ss["pending_preview"]
         with st.container(border=True):
@@ -1294,9 +1127,9 @@ if ss.get("can_edit"):
                 if last["name"] == p["name"]:
                     is_same_place = True
             
+            # --- FORM START ---
             with st.form("add_stop_form"):
-                # ROW 1: Mode Selection (Mezzo)
-                # We use columns to keep it tidy, even without the Name input
+                # NO NAME FIELD - Use search result directly
                 c_mode, c_dummy = st.columns([1, 1])
                 
                 with c_mode:
@@ -1310,7 +1143,6 @@ if ss.get("can_edit"):
                         st.caption(f"Spostamento da {ss['stops'][-1]['name']}")
                         mode = st.selectbox("Mezzo", ["Auto", "Treno", "Aereo", "Bus", "Altro"], index=0)
 
-                # ROW 2: Notes (Stop Note + Leg Note)
                 c_note_l, c_note_r = st.columns(2)
                 with c_note_l:
                     stop_note = st.text_input("Note tappa", value="")
@@ -1318,14 +1150,11 @@ if ss.get("can_edit"):
                     if not is_first and not is_same_place:
                         leg_note = st.text_input("Note spostamento", value="")
 
-                # ROW 3: Overnight & Submit
                 overnight = st.checkbox("Pernottamento", value=True)
 
                 st.write("") 
                 if st.form_submit_button("Aggiungi Tappa", type="primary", use_container_width=True):
-                    # Use the map name directly
-                    final_name = p["name"]
-                    
+                    final_name = p["name"] # Explicitly use Search Name
                     add_stop_internal(final_name, p["lat"], p["lon"], overnight, stop_note)
                     
                     if not is_first:
@@ -1342,9 +1171,9 @@ if ss.get("can_edit"):
                     ss["last_selected_label"] = None
                     ss["search_key_version"] += 1
                     st.rerun()
+
 st.divider()
 
-# Map
 m = build_map(ss["stops"], ss["legs_between"])
 st_folium(m, height=720, width=None, key=f"map_{ss['map_version']}", returned_objects=[])
 
@@ -1355,15 +1184,12 @@ st.divider()
 # ------------------------------------------------------------------------------
 st.markdown("## Itinerario")
 
-# [Keep Drag & Drop code here if present]
-
 if not ss.get("stops"):
     st.info("Nessuna tappa. Aggiungine una cercando qui sopra." if ss.get("can_edit") else "Nessuna tappa definita.")
 else:
     blocks = itinerary_day_blocks(ss["stops"], ss["legs_between"])
     
     for b_idx, b in enumerate(blocks):
-        # --- Header ---
         start_stop = ss["stops"][b["start"]]
         end_stop = ss["stops"][b["end"]]
         date_str = fmt_date(b["date"])
@@ -1389,10 +1215,7 @@ else:
         if b["start"] != b["end"]:
             header += f" ➝ {end_stop['name']}"
 
-        # --- Expander ---
         with st.expander(header, expanded=False):
-            
-            # VIEW MODE
             if ss.get("editing_day_idx") != b_idx:
                 for i in range(b["start"], b["end"] + 1):
                     s = ss["stops"][i]
@@ -1435,11 +1258,10 @@ else:
                                 ss["legs_between"][idx] = None
                             elif (n_m != "—") and (not old or old.get("mode") != n_m):
                                 A, B = ss["stops"][idx], ss["stops"][idx+1]
+                                # FORCE GOOGLE
                                 try:
-                                    if "google_driving_route" in globals():
-                                        rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                        rt["source"] = "google"
-                                    else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                    rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                    rt["source"] = "google"
                                 except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
                                 if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None})
@@ -1459,7 +1281,6 @@ else:
                     s = ss["stops"][i]
                     k_sfx = f"{b_idx}_{i}"
                     
-                    # --- LOCATION SEARCH (Keep this as is) ---
                     new_loc = st_searchbox(
                         search_api_labels,
                         key=f"search_{k_sfx}",
@@ -1485,10 +1306,8 @@ else:
                                     if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
                                         A, B = ss["stops"][l_idx], ss["stops"][i]
                                         try:
-                                            if "google_driving_route" in globals():
-                                                rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                                rt["source"] = "google"
-                                            else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            rt["source"] = "google"
                                             ss["legs_between"][l_idx].update(rt)
                                         except: pass
                                 
@@ -1498,19 +1317,16 @@ else:
                                     if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
                                         A, B = ss["stops"][i], ss["stops"][i+1]
                                         try:
-                                            if "google_driving_route" in globals():
-                                                rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                                rt["source"] = "google"
-                                            else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            rt["source"] = "google"
                                             ss["legs_between"][l_idx].update(rt)
                                         except: pass
                                         
                                 mark_dirty()
                                 st.rerun()
 
-                    # --- STOP FIELDS (FIXED: Removed Name Input) ---
+                    # --- STOP FIELDS (NO NAME) ---
                     def update_stop(idx=i, k=k_sfx):
-                        # Removed the name update line
                         ss["stops"][idx]["note"] = st.session_state[f"d_note_{k}"]
                         ss["stops"][idx]["overnight"] = st.session_state[f"d_ov_{k}"]
                         mark_dirty()
@@ -1523,7 +1339,6 @@ else:
                         st.write("")
                         st.checkbox("Pernottamento", value=s.get("overnight", False), key=f"d_ov_{k_sfx}", on_change=update_stop)
 
-                    # --- OUTGOING LEG (PRESERVED) ---
                     if i < len(ss["stops"]) - 1:
                         leg = ss["legs_between"][i]
                         st.caption(f"🔻 Verso {ss['stops'][i+1]['name']}")
@@ -1540,11 +1355,10 @@ else:
                                 ss["legs_between"][idx] = None
                             elif (n_m != "—") and (not old or old.get("mode") != n_m):
                                 A, B = ss["stops"][idx], ss["stops"][idx+1]
+                                # FORCE GOOGLE
                                 try:
-                                    if "google_driving_route" in globals():
-                                        rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                        rt["source"] = "google"
-                                    else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                    rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                    rt["source"] = "google"
                                 except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
                                 if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None})
@@ -1562,27 +1376,19 @@ else:
                             st.text_input("Note Leg", value=l_n, key=f"d_lnote_{k_sfx}", label_visibility="collapsed", on_change=update_leg)
                         st.divider()
 
-                # Close Button
                 if st.button("✅ Chiudi Modifica", key=f"close_{b_idx}"):
                     ss["editing_day_idx"] = None
                     st.rerun()
 
-# Autosave
 if ss.get("dirty", False):
-    save_to_supabase()# Autosave
+    save_to_supabase()
 
-
-
-# ==============================================================================
-# FOOTER: DANGER ZONE (Soft Delete)
-# ==============================================================================
 if ss.get("can_edit"):
     st.divider()
     with st.expander("Elimina Viaggio"):
         st.write(f"Stai per eliminare: **{ss['trip_name']}**")
-        st.caption("Il viaggio verrà nascosto dalla lista, ma rimarrà nel database (potrai ripristinarlo manualmente da Supabase rimuovendo il flag 'is_deleted').")
+        st.caption("Il viaggio verrà nascosto dalla lista.")
         
-        # Use session state to handle the confirmation flow
         if "confirm_delete" not in ss:
             ss["confirm_delete"] = False
 
@@ -1591,7 +1397,7 @@ if ss.get("can_edit"):
                 ss["confirm_delete"] = True
                 st.rerun()
         else:
-            st.warning("Sei sicuro? Il viaggio non sarà più visibile nell'app.")
+            st.warning("Sei sicuro?")
             col_d1, col_d2 = st.columns([1, 1])
             with col_d1:
                 if st.button("❌ Annulla"):
@@ -1599,7 +1405,6 @@ if ss.get("can_edit"):
                     st.rerun()
             with col_d2:
                 if st.button("✅ Conferma Eliminazione", type="primary"):
-                    # 1. Prepare data with is_deleted = True
                     trip_id = ss["current_trip_id"]
                     data_to_save = {
                         "name": ss["trip_name"],
@@ -1607,10 +1412,9 @@ if ss.get("can_edit"):
                         "stops": ss["stops"],
                         "legs_between": ss["legs_between"],
                         "last_updated": datetime.now().isoformat(),
-                        "is_deleted": True  # <--- The Soft Delete Flag
+                        "is_deleted": True
                     }
 
-                    # 2. Push to Supabase
                     try:
                         supabase.table("itineraries").upsert({
                             "trip_id": trip_id, 
@@ -1619,27 +1423,16 @@ if ss.get("can_edit"):
                         
                         st.success("Viaggio eliminato.")
                         
-                        # 3. SAFER RESET STATE
-                        # We do NOT delete 'stops' key to avoid KeyError in the sidebar.
-                        # Instead, we delete 'initialized' and 'current_trip_id' so init_state() 
-                        # knows it must run fresh and overwrite the data.
-                        
-                        # 3. SAFER RESET STATE
-                        # We force init_state to run from scratch
                         keys_to_clear = ["initialized", "current_trip_id", "stops", "legs_between", "trip_name"]
                         for k in keys_to_clear:
                             if k in ss:
                                 del ss[k]
                         
-                        # Clear URL
                         if hasattr(st, "query_params"): 
                             st.query_params.clear()
                         else:
                             st.experimental_set_query_params()
                             
-                        # Force reload
                         st.rerun()
-                        
-                        
                     except Exception as e:
                         st.error(f"Errore durante l'eliminazione: {e}")
