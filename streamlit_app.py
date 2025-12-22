@@ -1281,7 +1281,7 @@ else:
                                 ss["stops"][i]["name"] = found["name"] 
                                 ss["map_center"] = (found["lat"], found["lon"])
                                 
-                                # --- FIX: Recalc Incoming (Handles ALL modes) ---
+                                # Recalc Incoming
                                 if i > 0:
                                     l_idx = i - 1
                                     leg = ss["legs_between"][l_idx]
@@ -1294,10 +1294,9 @@ else:
                                                 leg.update(rt)
                                             except: pass
                                         else:
-                                            # Force update line for Planes/Straight lines
                                             leg["geometry_latlon"] = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
-                                # --- FIX: Recalc Outgoing (Handles ALL modes) ---
+                                # Recalc Outgoing
                                 if i < len(ss["stops"]) - 1:
                                     l_idx = i
                                     leg = ss["legs_between"][l_idx]
@@ -1310,9 +1309,11 @@ else:
                                                 leg.update(rt)
                                             except: pass
                                         else:
-                                            # Force update line for Planes/Straight lines
                                             leg["geometry_latlon"] = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
-                                        
+                                
+                                # --- NEW: Close the edit panel automatically ---
+                                ss["editing_day_idx"] = None
+                                
                                 mark_dirty()
                                 st.rerun()
 
