@@ -1607,7 +1607,7 @@ if ss["dirty"]:
 # ==============================================================================
 if ss.get("can_edit"):
     st.divider()
-    with st.expander("Elimina Viaggio"):
+    with st.expander("🚨 Zona Pericolo (Elimina Viaggio)"):
         st.write(f"Stai per eliminare: **{ss['trip_name']}**")
         st.caption("Il viaggio verrà nascosto dalla lista, ma rimarrà nel database (potrai ripristinarlo manualmente da Supabase rimuovendo il flag 'is_deleted').")
         
@@ -1648,12 +1648,18 @@ if ss.get("can_edit"):
                         
                         st.success("Viaggio eliminato.")
                         
-                        # 3. Reset State to force a reload (which will pick a different trip or create new)
-                        # We clear the specific session keys to force init_state to run fresh
-                        for key in ["initialized", "current_trip_id", "stops", "trip_name"]:
-                            if key in ss: del ss[key]
+                        # 3. SAFER RESET STATE
+                        # We do NOT delete 'stops' key to avoid KeyError in the sidebar.
+                        # Instead, we delete 'initialized' and 'current_trip_id' so init_state() 
+                        # knows it must run fresh and overwrite the data.
                         
-                        # Remove URL param to prevent reloading the deleted trip
+                        if "initialized" in ss: 
+                            del ss["initialized"]
+                        
+                        if "current_trip_id" in ss:
+                            del ss["current_trip_id"]
+                        
+                        # Clear URL
                         if hasattr(st, "query_params"): 
                             st.query_params.clear()
                         else:
