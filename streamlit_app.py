@@ -1351,8 +1351,10 @@ else:
                         l_m = leg.get("mode", "—") if leg else "—"
                         l_n = leg.get("note", "") if leg else ""
                         
+                        # FIX: Explicitly define the list here to avoid conflict with the 'modes' set used in the header
+                        modes_list = ["—", "car", "bus", "train", "plane", "ferry"]
+                        
                         def update_leg(idx=i, k=k_sfx):
-                            # FIX: Use .get() to prevent KeyError on Enter
                             n_m = st.session_state.get(f"d_mode_{k}")
                             n_n = st.session_state.get(f"d_lnote_{k}")
 
@@ -1365,14 +1367,20 @@ else:
                             elif (n_m != "—") and (not old or old.get("mode") != n_m):
                                 A, B = ss["stops"][idx], ss["stops"][idx+1]
                                 try:
+                                    # Always try Google first if available
                                     if "google_driving_route" in globals():
                                         rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                         rt["source"] = "google"
-                                    else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                    else: 
+                                        # Fallback (though we removed OSRM, good to be safe)
+                                        rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                except: 
+                                    rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
-                                if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None})
-                                else: rt.update({"mode": n_m, "note": n_n})
+                                if n_m == "plane": 
+                                    rt.update({"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None})
+                                else: 
+                                    rt.update({"mode": n_m, "note": n_n})
                                 ss["legs_between"][idx] = rt
                             elif ss["legs_between"][idx]:
                                 ss["legs_between"][idx]["note"] = n_n
@@ -1380,8 +1388,9 @@ else:
 
                         lc1, lc2 = st.columns([1, 4])
                         with lc1:
-                            idx_l = modes.index(l_m) if l_m in modes else 0
-                            st.selectbox("Mezzo", modes, index=idx_l, format_func=fmt_m, key=f"d_mode_{k_sfx}", label_visibility="collapsed", on_change=update_leg)
+                            # Use modes_list here
+                            idx_l = modes_list.index(l_m) if l_m in modes_list else 0
+                            st.selectbox("Mezzo", modes_list, index=idx_l, format_func=lambda x: {"car":"Auto","bus":"Bus","train":"Treno","plane":"Aereo","ferry":"Traghetto","—":"—"}.get(x, x), key=f"d_mode_{k_sfx}", label_visibility="collapsed", on_change=update_leg)
                         with lc2:
                             st.text_input("Note Leg", value=l_n, key=f"d_lnote_{k_sfx}", label_visibility="collapsed", on_change=update_leg)
                         st.divider()
