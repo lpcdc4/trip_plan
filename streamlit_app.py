@@ -981,7 +981,7 @@ def check_access():
     # 3. Check if we previously authorized this trip in this session
     # Use .get() to avoid crashing if current_trip_id hasn't been set yet
     if ss.get("current_trip_id") and ss.get("current_trip_id") in ss.get("allowed_view_ids", set()):
-        return True:
+        return True
     # --- TIER 1: BLOCKED (Show Login) ---
     st.markdown("### 🔒 Accesso Limitato")
     st.caption("Inserisci il PIN Amministratore o un Token Viaggio.")
