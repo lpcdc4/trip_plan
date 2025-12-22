@@ -1360,11 +1360,10 @@ st.markdown("## Itinerario")
 if not ss.get("stops"):
     st.info("Nessuna tappa. Aggiungine una cercando qui sopra." if ss.get("can_edit") else "Nessuna tappa definita.")
 else:
-    # 1. Calculate Day Blocks
     blocks = itinerary_day_blocks(ss["stops"], ss["legs_between"])
     
     for b_idx, b in enumerate(blocks):
-        # --- Header Calculation ---
+        # --- Header ---
         start_stop = ss["stops"][b["start"]]
         end_stop = ss["stops"][b["end"]]
         date_str = fmt_date(b["date"])
@@ -1390,10 +1389,10 @@ else:
         if b["start"] != b["end"]:
             header += f" ➝ {end_stop['name']}"
 
-        # 2. THE EXPANDER
+        # --- Expander ---
         with st.expander(header, expanded=False):
             
-            # --- VIEW MODE ---
+            # VIEW MODE
             if ss.get("editing_day_idx") != b_idx:
                 for i in range(b["start"], b["end"] + 1):
                     s = ss["stops"][i]
@@ -1408,11 +1407,11 @@ else:
                 if ss.get("can_edit"):
                     st.button("✏️ Modifica Giorno", key=f"btn_edit_{b_idx}", on_click=lambda idx=b_idx: ss.update({"editing_day_idx": idx}))
             
-            # --- EDIT MODE ---
+            # EDIT MODE
             else:
                 st.markdown(f"#### ✏️ Modifica Giorno {b['day']}")
                 
-                # 1. Incoming Leg (Start of Day)
+                # 1. Incoming Leg
                 if b["start"] > 0:
                     prev_stop = ss["stops"][b["start"]-1]
                     inc_leg = ss["legs_between"][b["start"]-1]
@@ -1427,13 +1426,11 @@ else:
                         modes = ["—", "car", "bus", "train", "plane", "ferry"]
                         idx_m = modes.index(cur_m) if cur_m in modes else 0
                         
-                        # CALLBACK: Update Incoming Leg
                         def update_inc_leg(idx=b["start"]-1):
                             n_m = st.session_state[f"inc_mode_{b_idx}"]
                             n_n = st.session_state[f"inc_note_{b_idx}"]
-                            
                             old = ss["legs_between"][idx]
-                            # Recalc if mode changed
+                            
                             if n_m == "—":
                                 ss["legs_between"][idx] = None
                             elif (n_m != "—") and (not old or old.get("mode") != n_m):
@@ -1442,11 +1439,10 @@ else:
                                     if "google_driving_route" in globals():
                                         rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                         rt["source"] = "google"
-                                    else:
-                                        rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                    else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                 except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
-                                if n_m == "plane": rt = {"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None, "geometry_latlon": interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])}
+                                if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None})
                                 else: rt.update({"mode": n_m, "note": n_n})
                                 ss["legs_between"][idx] = rt
                             elif ss["legs_between"][idx]:
@@ -1463,8 +1459,8 @@ else:
                     s = ss["stops"][i]
                     k_sfx = f"{b_idx}_{i}"
                     
-                    # --- LOCATION SEARCH (DIRECT CHANGE) ---
-                    # We put this alone in a row to keep it clean, or above the fields
+                    # --- LOCATION SEARCH ---
+                    # Interactive search that auto-updates coords and label
                     new_loc = st_searchbox(
                         search_api_labels,
                         key=f"search_{k_sfx}",
@@ -1472,47 +1468,50 @@ else:
                         label=None
                     )
                     
-                    # LOGIC: If search returns result, update Stop AND Name
+                    # LOGIC: Only update if Coordinates CHANGED (Breaks Infinite Loop)
                     if new_loc:
                         found = ss.get("search_lookup", {}).get(new_loc)
                         if found:
-                            # Update Coordinates
-                            ss["stops"][i]["lat"] = found["lat"]
-                            ss["stops"][i]["lon"] = found["lon"]
-                            ss["stops"][i]["name"] = found["name"] # Auto-update Label
-                            ss["map_center"] = (found["lat"], found["lon"])
+                            lat_diff = abs(s["lat"] - found["lat"])
+                            lon_diff = abs(s["lon"] - found["lon"])
                             
-                            # Recalc Routes (Incoming & Outgoing)
-                            # 1. Incoming
-                            if i > 0:
-                                l_idx = i - 1
-                                if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
-                                    A, B = ss["stops"][l_idx], ss["stops"][i]
-                                    try:
-                                        if "google_driving_route" in globals():
-                                            rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                            rt["source"] = "google"
-                                        else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                        ss["legs_between"][l_idx].update(rt)
-                                    except: pass
-                            # 2. Outgoing
-                            if i < len(ss["stops"]) - 1:
-                                l_idx = i
-                                if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
-                                    A, B = ss["stops"][i], ss["stops"][i+1]
-                                    try:
-                                        if "google_driving_route" in globals():
-                                            rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                            rt["source"] = "google"
-                                        else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                        ss["legs_between"][l_idx].update(rt)
-                                    except: pass
-                                    
-                            mark_dirty()
-                            st.rerun()
+                            # Only update/rerun if the place is actually different (> 10 meters approx)
+                            if lat_diff > 0.0001 or lon_diff > 0.0001:
+                                ss["stops"][i]["lat"] = found["lat"]
+                                ss["stops"][i]["lon"] = found["lon"]
+                                ss["stops"][i]["name"] = found["name"] # Auto-update Label
+                                ss["map_center"] = (found["lat"], found["lon"])
+                                
+                                # Recalc Incoming
+                                if i > 0:
+                                    l_idx = i - 1
+                                    if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
+                                        A, B = ss["stops"][l_idx], ss["stops"][i]
+                                        try:
+                                            if "google_driving_route" in globals():
+                                                rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                                rt["source"] = "google"
+                                            else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            ss["legs_between"][l_idx].update(rt)
+                                        except: pass
+                                
+                                # Recalc Outgoing
+                                if i < len(ss["stops"]) - 1:
+                                    l_idx = i
+                                    if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
+                                        A, B = ss["stops"][i], ss["stops"][i+1]
+                                        try:
+                                            if "google_driving_route" in globals():
+                                                rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                                rt["source"] = "google"
+                                            else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            ss["legs_between"][l_idx].update(rt)
+                                        except: pass
+                                        
+                                mark_dirty()
+                                st.rerun()
 
                     # --- STOP FIELDS ---
-                    # Defining callbacks to save immediately on blur/enter
                     def update_stop(idx=i, k=k_sfx):
                         ss["stops"][idx]["name"] = st.session_state[f"d_name_{k}"]
                         ss["stops"][idx]["note"] = st.session_state[f"d_note_{k}"]
@@ -1525,7 +1524,6 @@ else:
                     with c_nt:
                         st.text_input("Note", value=s.get("note", ""), key=f"d_note_{k_sfx}", on_change=update_stop)
                     with c_ov:
-                        # Label changed to "Pernottamento" as requested
                         st.checkbox("Pernottamento", value=s.get("overnight", False), key=f"d_ov_{k_sfx}", on_change=update_stop)
 
                     # --- OUTGOING LEG ---
@@ -1552,7 +1550,7 @@ else:
                                     else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                 except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
-                                if n_m == "plane": rt = {"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None, "geometry_latlon": interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])}
+                                if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None})
                                 else: rt.update({"mode": n_m, "note": n_n})
                                 ss["legs_between"][idx] = rt
                             elif ss["legs_between"][idx]:
@@ -1574,7 +1572,8 @@ else:
 
 # Autosave
 if ss.get("dirty", False):
-    save_to_supabase()
+    save_to_supabase()# Autosave
+
 
 
 # ==============================================================================
