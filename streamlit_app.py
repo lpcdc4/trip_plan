@@ -1419,7 +1419,7 @@ if ss.get("can_edit"):
                 ss["confirm_delete"] = True
                 st.rerun()
         else:
-            st.warning("Sei sicuro?")
+            st.warning("Sei sicuro? Il viaggio non sarà più visibile nell'app.")
             col_d1, col_d2 = st.columns([1, 1])
             with col_d1:
                 if st.button("❌ Annulla"):
@@ -1445,7 +1445,15 @@ if ss.get("can_edit"):
                         
                         st.success("Viaggio eliminato.")
                         
-                        keys_to_clear = ["initialized", "current_trip_id", "stops", "legs_between", "trip_name"]
+                        # --- CRITICAL FIXES ---
+                        # 1. Clear the cache so the app doesn't reload the deleted trip
+                        get_all_trips_summary.clear()
+                        
+                        # 2. Reset the deletion confirmation state
+                        keys_to_clear = [
+                            "initialized", "current_trip_id", "stops", 
+                            "legs_between", "trip_name", "confirm_delete"
+                        ]
                         for k in keys_to_clear:
                             if k in ss:
                                 del ss[k]
