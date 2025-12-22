@@ -1,6 +1,6 @@
 # streamlit_app.py
 #
-# Streamlit itinerary planner (Photon Search + Google Maps Routing) + Supabase Sync + PIN Protection
+# Streamlit itinerary planner (Google Geocoding + Google Maps Routing) + Supabase Sync + PIN Protection
 #
 # Install:
 #   pip install streamlit folium streamlit-folium requests polyline streamlit-searchbox streamlit-sortables supabase fpdf2 googlemaps
@@ -52,6 +52,7 @@ except Exception:
 
 try:
     # Initialize Google Maps Client
+    # NOTE: Ensure 'Geocoding API' and 'Directions API' are enabled in Google Cloud Console
     GMAPS_KEY = st.secrets["GOOGLE_MAPS_KEY"]
     gmaps = googlemaps.Client(key=GMAPS_KEY)
 except Exception:
@@ -95,7 +96,6 @@ def validate_trip_token(trip_id: str, token: str) -> bool:
 # ==============================================================================
 # CONSTANTS & SETUP
 # ==============================================================================
-PHOTON_SEARCH = "https://photon.komoot.io/api/"
 DEFAULT_USER_AGENT = "itinerary-planner-cloud/1.0"
 
 
@@ -301,54 +301,37 @@ def fmt_date(d: Optional[date]) -> str:
     return d.strftime("%d/%m/%y") if d else ""
 
 
-# ----------------------- External calls (SEARCH & GOOGLE) -----------------------
+# ----------------------- External calls (GOOGLE GEOCODING & DIRECTIONS) -----------------------
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_locations_v2(query: str, user_agent: str, limit: int = 15) -> List[Dict]:
+def fetch_locations_google(query: str) -> List[Dict]:
     """
-    V2 Search: Fetches raw location data and creates a full descriptive name.
-    Strictly prioritized: Name > Street > City
+    Uses Google Geocoding API to find places.
+    Requires 'Geocoding API' to be enabled in Google Cloud Console.
     """
     if not query or len(query) < 2:
         return []
 
-    params = {"q": query, "limit": limit, "lang": "it"}
-    headers = {"User-Agent": user_agent}
-
     try:
-        r = requests.get(PHOTON_SEARCH, params=params, headers=headers, timeout=5)
-        r.raise_for_status()
-        data = r.json()
+        # language='it' to get Italian names for cities/countries
+        results_raw = gmaps.geocode(query, language='it')
         
         results = []
-        for feature in data.get("features", []):
-            props = feature.get("properties", {})
-            coords = feature.get("geometry", {}).get("coordinates", [])
+        for r in results_raw:
+            # Google returns "formatted_address" which is usually perfect
+            # e.g., "Colosseo, Piazza del Colosseo, 1, Roma RM, Italia"
+            display_name = r.get("formatted_address", query)
+            loc = r.get("geometry", {}).get("location", {})
             
-            if len(coords) == 2:
-                # Robust Name Builder
-                main_name = props.get("name") or props.get("street") or props.get("city")
-                if not main_name:
-                    continue
-
-                # Build full string
-                city = props.get("city")
-                state = props.get("state")
-                country = props.get("country")
-                
-                parts = [main_name]
-                if city and city != main_name: parts.append(city)
-                if state: parts.append(state)
-                if country: parts.append(country)
-                
-                display_name = ", ".join(parts)
-                
+            if loc:
                 results.append({
                     "name": display_name,
-                    "lat": float(coords[1]),
-                    "lon": float(coords[0]),
+                    "lat": float(loc["lat"]),
+                    "lon": float(loc["lng"]),
                 })
         return results
-    except Exception:
+    except Exception as e:
+        # Fail silently in UI but return empty so user sees "No options"
+        # If debugging is needed, use st.error(e) temporarily
         return []
 
 
@@ -691,15 +674,13 @@ def search_api_labels(query: str) -> List[str]:
         ss["search_lookup"] = {}
         return []
     
-    ua = ss.get("user_agent", DEFAULT_USER_AGENT)
-    
-    # Use V2 (Robust Name)
-    results = fetch_locations_v2(q, ua, limit=10)
+    # CALLS THE NEW GOOGLE FUNCTION
+    results = fetch_locations_google(q)
     
     lookup: Dict[str, Dict] = {}
     labels: List[str] = []
     for r in results:
-        # PURE SEARCH NAME ONLY
+        # PURE SEARCH NAME ONLY (Google Formatted Address)
         label = r["name"]
         lookup[label] = r
         if label not in labels:
