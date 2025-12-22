@@ -978,9 +978,10 @@ def check_access():
                 return True
 
     # 3. Check if we previously authorized this trip in this session
-    if ss["current_trip_id"] in ss["allowed_view_ids"]:
-        return True
-
+    # 3. Check if we previously authorized this trip in this session
+    # Use .get() to avoid crashing if current_trip_id hasn't been set yet
+    if ss.get("current_trip_id") and ss.get("current_trip_id") in ss.get("allowed_view_ids", set()):
+        return True:
     # --- TIER 1: BLOCKED (Show Login) ---
     st.markdown("### 🔒 Accesso Limitato")
     st.caption("Inserisci il PIN Amministratore o un Token Viaggio.")
@@ -1033,7 +1034,7 @@ with st.sidebar:
     st.divider()
 
     # 2. PDF DOWNLOAD (Replaces Print Toggle)
-    if ss["stops"]:
+    if ss.get("stops"):
         pdf_data = generate_pdf_bytes(
             ss["trip_name"], 
             ss["trip_start_date"], 
