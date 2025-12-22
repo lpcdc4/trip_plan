@@ -1361,10 +1361,21 @@ else:
                 k_sfx = f"{i}_{b_idx}"
 
                 # --- EDIT MODE ---
+                # --- EDIT MODE ---
                 if ss.get("editing_stop_idx") == i:
                     with st.container(border=True):
                         st.write(f"**Modifica: {s['name']}**")
                         
+                        # 1. NEW: Add Search Box for changing location
+                        c_search = st.container()
+                        with c_search:
+                            new_loc_label = st_searchbox(
+                                search_api_labels,
+                                key=f"edit_search_{k_sfx}",
+                                placeholder="Cerca nuova posizione (opzionale)...",
+                                label="Cambia Luogo (lascia vuoto per mantenere attuale)"
+                            )
+
                         c_edit_1, c_edit_2 = st.columns([3, 2])
                         with c_edit_1:
                             new_name_edit = st.text_input("Nome", s['name'], key=f"edit_name_{k_sfx}")
@@ -1382,10 +1393,11 @@ else:
                                 mark_dirty()
                                 st.rerun()
 
-                        # LEG DETAILS
+                        # LEG DETAILS (Outgoing)
                         new_mode_edit = None
                         new_leg_note_edit = ""
                         has_leg = (i < len(ss["stops"]) - 1)
+                        
                         if has_leg:
                             st.markdown("---")
                             st.caption(f"Spostamento verso {ss['stops'][i+1]['name']}")
@@ -1401,12 +1413,50 @@ else:
                             with cl2:
                                 new_leg_note_edit = st.text_input("Note Spostamento", cur_leg_note, key=f"edit_leg_note_{k_sfx}")
 
-                        st.write("")
+                        st.write("") 
                         if st.button("💾 Salva Modifiche", key=f"save_{k_sfx}", type="primary"):
+                            # 1. Update Basic Info
                             ss["stops"][i]["name"] = new_name_edit
                             ss["stops"][i]["note"] = new_note_edit
                             ss["stops"][i]["overnight"] = new_ov_edit
                             
+                            # 2. Update Location (Lat/Lon) if Search was used
+                            coords_changed = False
+                            if new_loc_label:
+                                new_loc_data = ss.get("search_lookup", {}).get(new_loc_label)
+                                if new_loc_data:
+                                    ss["stops"][i]["lat"] = new_loc_data["lat"]
+                                    ss["stops"][i]["lon"] = new_loc_data["lon"]
+                                    # Optional: Update name if user didn't type a custom one? 
+                                    # For now, we trust the text input, but we assume the user might want to rename it manually.
+                                    coords_changed = True
+                                    ss["map_center"] = (new_loc_data["lat"], new_loc_data["lon"])
+
+                            # 3. Handle Legs Logic
+                            
+                            # A. INCOMING LEG (The leg leading TO this stop)
+                            # If we moved this stop, we must recalculate the route coming from the previous stop
+                            if coords_changed and i > 0:
+                                prev_leg_idx = i - 1
+                                prev_leg = ss["legs_between"][prev_leg_idx]
+                                # Only recalculate if a leg exists (not None)
+                                if prev_leg:
+                                    pmode = prev_leg.get("mode", "car")
+                                    pnote = prev_leg.get("note", "")
+                                    prev_stop = ss["stops"][prev_leg_idx]
+                                    curr_stop = ss["stops"][i]
+                                    
+                                    with st.spinner("Ricalcolo percorso precedente..."):
+                                        if pmode in {"car", "bus", "train"}:
+                                            p_route = osrm_driving_route(prev_stop["lat"], prev_stop["lon"], curr_stop["lat"], curr_stop["lon"])
+                                            ss["legs_between"][prev_leg_idx] = {"mode": pmode, "note": pnote, **p_route}
+                                        elif pmode == "plane":
+                                            ss["legs_between"][prev_leg_idx] = {
+                                                "mode": "plane", "note": pnote, "distance_m": None, "duration_s": None,
+                                                "geometry_latlon": interpolate_line(prev_stop["lat"], prev_stop["lon"], curr_stop["lat"], curr_stop["lon"])
+                                            }
+
+                            # B. OUTGOING LEG (The leg leading FROM this stop)
                             if has_leg:
                                 leg_changed = False
                                 if not ss["legs_between"][i]:
@@ -1414,17 +1464,19 @@ else:
                                 elif ss["legs_between"][i].get("mode") != new_mode_edit:
                                     leg_changed = True
                                 
+                                # If just the note changed
                                 if not leg_changed and ss["legs_between"][i]:
                                     ss["legs_between"][i]["note"] = new_leg_note_edit
                                 
-                                if leg_changed or (new_mode_edit != "—" and not ss["legs_between"][i]):
+                                # Force update if Coords changed OR Mode changed OR Leg didn't exist
+                                if leg_changed or coords_changed or (new_mode_edit != "—" and not ss["legs_between"][i]):
                                     if new_mode_edit == "—":
                                         ss["legs_between"][i] = None
                                     else:
                                         a = ss["stops"][i]
                                         b_stop = ss["stops"][i+1]
                                         if new_mode_edit in {"car", "bus", "train"}:
-                                            with st.spinner("Ricalcolo percorso..."):
+                                            with st.spinner("Ricalcolo percorso successivo..."):
                                                 route = osrm_driving_route(a["lat"], a["lon"], b_stop["lat"], b_stop["lon"])
                                             ss["legs_between"][i] = {"mode": new_mode_edit, "note": new_leg_note_edit, **route}
                                         else:
