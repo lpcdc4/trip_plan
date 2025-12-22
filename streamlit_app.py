@@ -1295,7 +1295,8 @@ if ss.get("can_edit"):
                     is_same_place = True
             
             with st.form("add_stop_form"):
-                # --- CHANGE: Simplified layout, removed "Nome (opzionale)" input ---
+                # ROW 1: Mode Selection (Mezzo)
+                # We use columns to keep it tidy, even without the Name input
                 c_mode, c_dummy = st.columns([1, 1])
                 
                 with c_mode:
@@ -1309,6 +1310,7 @@ if ss.get("can_edit"):
                         st.caption(f"Spostamento da {ss['stops'][-1]['name']}")
                         mode = st.selectbox("Mezzo", ["Auto", "Treno", "Aereo", "Bus", "Altro"], index=0)
 
+                # ROW 2: Notes (Stop Note + Leg Note)
                 c_note_l, c_note_r = st.columns(2)
                 with c_note_l:
                     stop_note = st.text_input("Note tappa", value="")
@@ -1316,12 +1318,14 @@ if ss.get("can_edit"):
                     if not is_first and not is_same_place:
                         leg_note = st.text_input("Note spostamento", value="")
 
+                # ROW 3: Overnight & Submit
                 overnight = st.checkbox("Pernottamento", value=True)
 
                 st.write("") 
                 if st.form_submit_button("Aggiungi Tappa", type="primary", use_container_width=True):
-                    # --- CHANGE: Use p["name"] directly ---
-                    final_name = p["name"] 
+                    # Use the map name directly
+                    final_name = p["name"]
+                    
                     add_stop_internal(final_name, p["lat"], p["lon"], overnight, stop_note)
                     
                     if not is_first:
@@ -1455,8 +1459,7 @@ else:
                     s = ss["stops"][i]
                     k_sfx = f"{b_idx}_{i}"
                     
-                    # --- LOCATION SEARCH ---
-                    # Interactive search that auto-updates coords and label
+                    # --- LOCATION SEARCH (Keep this as is) ---
                     new_loc = st_searchbox(
                         search_api_labels,
                         key=f"search_{k_sfx}",
@@ -1464,18 +1467,16 @@ else:
                         label=None
                     )
                     
-                    # LOGIC: Only update if Coordinates CHANGED (Breaks Infinite Loop)
                     if new_loc:
                         found = ss.get("search_lookup", {}).get(new_loc)
                         if found:
                             lat_diff = abs(s["lat"] - found["lat"])
                             lon_diff = abs(s["lon"] - found["lon"])
                             
-                            # Only update/rerun if the place is actually different (> 10 meters approx)
                             if lat_diff > 0.0001 or lon_diff > 0.0001:
                                 ss["stops"][i]["lat"] = found["lat"]
                                 ss["stops"][i]["lon"] = found["lon"]
-                                ss["stops"][i]["name"] = found["name"] # Auto-update Label
+                                ss["stops"][i]["name"] = found["name"] 
                                 ss["map_center"] = (found["lat"], found["lon"])
                                 
                                 # Recalc Incoming
@@ -1507,25 +1508,22 @@ else:
                                 mark_dirty()
                                 st.rerun()
 
-                   # --- STOP FIELDS ---
+                    # --- STOP FIELDS (FIXED: Removed Name Input) ---
                     def update_stop(idx=i, k=k_sfx):
-                        # --- CHANGE: Removed name update line ---
+                        # Removed the name update line
                         ss["stops"][idx]["note"] = st.session_state[f"d_note_{k}"]
                         ss["stops"][idx]["overnight"] = st.session_state[f"d_ov_{k}"]
                         mark_dirty()
 
-                    # --- CHANGE: Removed Name Column, gave more space to Note ---
                     c_nt, c_ov = st.columns([4, 1])
-                    
                     with c_nt:
                         st.text_input("Note", value=s.get("note", ""), key=f"d_note_{k_sfx}", on_change=update_stop)
                     with c_ov:
-                        # Added a spacer to align checkbox vertically with text input
                         st.write("")
-                        st.write("") 
+                        st.write("")
                         st.checkbox("Pernottamento", value=s.get("overnight", False), key=f"d_ov_{k_sfx}", on_change=update_stop)
 
-                    # --- OUTGOING LEG ---
+                    # --- OUTGOING LEG (PRESERVED) ---
                     if i < len(ss["stops"]) - 1:
                         leg = ss["legs_between"][i]
                         st.caption(f"🔻 Verso {ss['stops'][i+1]['name']}")
