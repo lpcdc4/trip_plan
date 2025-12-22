@@ -26,6 +26,10 @@ from supabase import create_client, Client
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos  # <--- Add this line
 import hashlib
+import googlemaps # <--- Make sure to import this
+
+
+
 # ---------- optional drag & drop dependency ----------
 HAS_SORTABLES = False
 sort_items = None
@@ -48,6 +52,15 @@ try:
 except Exception:
     st.error("Missing Supabase secrets. Please set SUPABASE_URL and SUPABASE_KEY.")
     st.stop()
+
+try:
+    # Initialize Google Maps Client
+    GMAPS_KEY = st.secrets["GOOGLE_MAPS_KEY"]
+    gmaps = googlemaps.Client(key=GMAPS_KEY)
+except Exception:
+    st.error("Missing GOOGLE_MAPS_KEY in secrets.")
+    st.stop()
+
 
 # Logic to peek at the Trip ID in the URL before the app fully loads
 browser_tab_title = "Viaggio"
@@ -388,25 +401,43 @@ def forward_search(query: str, user_agent: str, limit: int = 15) -> List[Dict]:
         return []
 
 
-def osrm_driving_route(lat1: float, lon1: float, lat2: float, lon2: float) -> Dict:
-    url = OSRM_ROUTE.format(lat1=lat1, lon1=lon1, lat2=lat2, lon2=lon2)
-    params = {"overview": "full", "geometries": "polyline"}
+def google_driving_route(lat1: float, lon1: float, lat2: float, lon2: float) -> Dict:
+    """
+    Fetches driving route from Google Maps Directions API.
+    Returns the same structure as the old OSRM function for compatibility.
+    """
     try:
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        if data.get("code") != "Ok" or not data.get("routes"):
-            raise RuntimeError(f"OSRM routing failed")
-        route0 = data["routes"][0]
-        coords_latlon = polyline_lib.decode(route0["geometry"])
+        # Request driving directions
+        # mode="driving" is default, but explicit is safer
+        # departure_time="now" ensures traffic data is used (if available)
+        directions = gmaps.directions(
+            origin=(lat1, lon1),
+            destination=(lat2, lon2),
+            mode="driving",
+            units="metric"
+        )
+
+        if not directions:
+            raise RuntimeError("No route found")
+
+        route = directions[0]
+        leg = route['legs'][0]
+
+        # Google returns an encoded polyline for the 'overview_polyline'
+        # We need to decode it to a list of (lat, lon) for Folium
+        encoded_poly = route['overview_polyline']['points']
+        coords_latlon = polyline_lib.decode(encoded_poly)
+
         return {
-            "distance_m": float(route0["distance"]),
-            "duration_s": float(route0["duration"]),
+            "distance_m": float(leg['distance']['value']),  # meters
+            "duration_s": float(leg['duration']['value']),  # seconds
             "geometry_latlon": coords_latlon,
         }
-    except:
+    except Exception as e:
+        # Fallback to straight line if API fails or quota exceeded
         return {
-            "distance_m": None, "duration_s": None,
+            "distance_m": None, 
+            "duration_s": None,
             "geometry_latlon": interpolate_line(lat1, lon1, lat2, lon2)
         }
 
@@ -628,7 +659,7 @@ def set_leg_between(prev_idx: int, mode: str, note: str):
     leg: Optional[Dict] = {"mode": mode, "note": (note or "").strip()}
 
     if mode in {"car", "bus", "train"}:
-        leg.update(osrm_driving_route(a["lat"], a["lon"], b["lat"], b["lon"]))
+        leg.update(google_driving_route(a["lat"], a["lon"], b["lat"], b["lon"]))
     elif mode == "plane":
         leg.update(
             {
@@ -687,7 +718,7 @@ def apply_stop_reorder(new_order_ids: List[str]):
         A = new_stops[i]
         B = new_stops[i + 1]
         try:
-            route = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+            route = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
             new_legs.append({"mode": "car", "note": "", **route})
         except:
             new_legs.append(None)
@@ -1532,7 +1563,7 @@ else:
                                         c_stop = ss["stops"][i]
                                         # No spinner inside form submit, just run it
                                         if new_mode_in in {"car", "bus", "train"}:
-                                            route = osrm_driving_route(p_stop["lat"], p_stop["lon"], c_stop["lat"], c_stop["lon"])
+                                            route = google_driving_route(p_stop["lat"], p_stop["lon"], c_stop["lat"], c_stop["lon"])
                                             ss["legs_between"][idx_in] = {"mode": new_mode_in, "note": new_note_in, **route}
                                         else:
                                             ss["legs_between"][idx_in] = {
@@ -1557,7 +1588,7 @@ else:
                                         c_stop = ss["stops"][i]
                                         n_stop = ss["stops"][i+1]
                                         if new_mode_out in {"car", "bus", "train"}:
-                                            route = osrm_driving_route(c_stop["lat"], c_stop["lon"], n_stop["lat"], n_stop["lon"])
+                                            route = google_driving_route(c_stop["lat"], c_stop["lon"], n_stop["lat"], n_stop["lon"])
                                             ss["legs_between"][idx_out] = {"mode": new_mode_out, "note": new_note_out, **route}
                                         else:
                                             ss["legs_between"][idx_out] = {
