@@ -1375,7 +1375,7 @@ else:
                         
                         if has_incoming:
                             prev_s = ss["stops"][i-1]
-                            st.caption(f"🏁 Arrivo da {prev_s['name']}")
+                            st.caption(f"Arrivo da {prev_s['name']}")
                             
                             cur_leg_in = ss["legs_between"][i-1]
                             # Defaults
@@ -1432,7 +1432,7 @@ else:
                         if has_outgoing:
                             next_s = ss["stops"][i+1]
                             st.divider()
-                            st.caption(f"🚀 Partenza verso {next_s['name']}")
+                            st.caption(f"Partenza verso {next_s['name']}")
                             
                             cur_leg_out = ss["legs_between"][i]
                             # Defaults
