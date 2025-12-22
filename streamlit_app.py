@@ -1205,9 +1205,11 @@ else:
                         leg = ss["legs_between"][i]
                         if leg:
                             summ = leg_summary(leg)
-                            note_md = f" — *{leg['note']}*" if leg.get("note") else ""
-                            st.caption(f"🔻 **{summ}**{note_md}")
-                
+                            # --- FIX: .strip() ensures "*note*" becomes italic instead of literal ---
+                            note_txt = leg['note'].strip() if leg.get("note") else ""
+                            note_md = f" — *{note_txt}*" if note_txt else ""
+                            
+                            st.caption(f"🔻 **{summ}**{note_md}")                
                 if ss.get("can_edit"):
                     st.button("✏️ Modifica Giorno", key=f"btn_edit_{b_idx}", on_click=lambda idx=b_idx: ss.update({"editing_day_idx": idx}))
             
