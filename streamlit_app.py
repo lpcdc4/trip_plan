@@ -1270,10 +1270,11 @@ st.markdown("## Itinerario")
 
 # Drag & Drop: Only if Editing
 if ss["stops"] and ss.get("can_edit"):
-    with st.expander("Riordina tappe (trascina e rilascia)", expanded=False):
+    with st.expander("Riordina o Elimina tappe", expanded=False):
         if not HAS_SORTABLES:
             st.error("Drag & drop requires: pip install streamlit-sortables")
         else:
+            # --- 1. SORTABLE LIST ---
             base_items = [f"{i+1}. {s['name']}" for i, s in enumerate(ss["stops"])]
             
             if ss.get("sortable_items_cache") is None or len(ss["sortable_items_cache"]) != len(base_items):
@@ -1286,10 +1287,12 @@ if ss["stops"] and ss.get("can_edit"):
             )
             ss["sortable_items_cache"] = list(new_items)
 
+            # Check for Reordering
             if new_items != base_items:
                 new_order_ids = []
                 try:
                     for item in new_items:
+                        # Extract the original index from "1. Name"
                         original_num_str = str(item).split(". ", 1)[0]
                         original_idx = int(original_num_str) - 1
                         if 0 <= original_idx < len(ss["stops"]):
@@ -1303,6 +1306,50 @@ if ss["stops"] and ss.get("can_edit"):
                     renumber_stops_and_update()
                     ss["sortable_items_cache"] = None
                     st.success("Ordine aggiornato.")
+                    st.rerun()
+
+            # --- 2. BULK DELETE SECTION ---
+            st.divider()
+            st.markdown("🗑 **Eliminazione Rapida**")
+            st.caption("Seleziona le tappe da rimuovere e clicca conferma.")
+
+            # Map "1. Name" -> Stop ID for easy lookup
+            options_map = {f"{i+1}. {s['name']}": s["id"] for i, s in enumerate(ss["stops"])}
+            
+            selected_for_deletion = st.multiselect(
+                "Seleziona tappe da eliminare",
+                options=list(options_map.keys()),
+                label_visibility="collapsed",
+                placeholder="Scegli tappe da eliminare..."
+            )
+
+            if selected_for_deletion:
+                if st.button(f"Elimina {len(selected_for_deletion)} tappe", type="primary"):
+                    # Get IDs to delete
+                    ids_to_delete = {options_map[k] for k in selected_for_deletion}
+                    
+                    # Filter Data
+                    old_stops = list(ss["stops"])
+                    old_legs = list(ss["legs_between"])
+                    
+                    # Keep only stops NOT in the delete list
+                    ss["stops"] = [s for s in ss["stops"] if s["id"] not in ids_to_delete]
+                    
+                    # Reconstruct legs (A -> C if B is deleted)
+                    ss["legs_between"] = rebuild_legs_from_old(old_stops, old_legs, ss["stops"])
+                    
+                    # Final Cleanup
+                    ensure_legs_alignment()
+                    ss["map_center"] = compute_center(ss["stops"])
+                    
+                    # Renumber (S1, S2...) so the UI stays clean
+                    renumber_stops_and_update()
+                    
+                    # Clear Cache to force UI refresh
+                    ss["sortable_items_cache"] = None
+                    ss["sortable_key_version"] += 1
+                    
+                    st.success("Tappe eliminate.")
                     st.rerun()
 
 if not ss["stops"]:
