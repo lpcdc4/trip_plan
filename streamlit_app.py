@@ -1281,27 +1281,37 @@ else:
                                 ss["stops"][i]["name"] = found["name"] 
                                 ss["map_center"] = (found["lat"], found["lon"])
                                 
-                                # Recalc Incoming
+                                # --- FIX: Recalc Incoming (Handles ALL modes) ---
                                 if i > 0:
                                     l_idx = i - 1
-                                    if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
+                                    leg = ss["legs_between"][l_idx]
+                                    if leg:
                                         A, B = ss["stops"][l_idx], ss["stops"][i]
-                                        try:
-                                            rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                            rt["source"] = "google"
-                                            ss["legs_between"][l_idx].update(rt)
-                                        except: pass
+                                        if leg.get("mode") in {"car", "bus", "train"}:
+                                            try:
+                                                rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                                rt["source"] = "google"
+                                                leg.update(rt)
+                                            except: pass
+                                        else:
+                                            # Force update line for Planes/Straight lines
+                                            leg["geometry_latlon"] = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
-                                # Recalc Outgoing
+                                # --- FIX: Recalc Outgoing (Handles ALL modes) ---
                                 if i < len(ss["stops"]) - 1:
                                     l_idx = i
-                                    if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
+                                    leg = ss["legs_between"][l_idx]
+                                    if leg:
                                         A, B = ss["stops"][i], ss["stops"][i+1]
-                                        try:
-                                            rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                            rt["source"] = "google"
-                                            ss["legs_between"][l_idx].update(rt)
-                                        except: pass
+                                        if leg.get("mode") in {"car", "bus", "train"}:
+                                            try:
+                                                rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                                rt["source"] = "google"
+                                                leg.update(rt)
+                                            except: pass
+                                        else:
+                                            # Force update line for Planes/Straight lines
+                                            leg["geometry_latlon"] = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                         
                                 mark_dirty()
                                 st.rerun()
