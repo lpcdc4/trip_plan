@@ -359,11 +359,12 @@ def fmt_date(d: Optional[date]) -> str:
 
 # ----------------------- External calls -----------------------
 @st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def forward_search(query: str, user_agent: str, limit: int = 15) -> List[Dict]:
     if len(query) < 2:
         return []
 
-    params = {"q": query, "limit": limit, "lang": "en"}
+    params = {"q": query, "limit": limit, "lang": "it"}
     headers = {"User-Agent": user_agent}
 
     try:
@@ -372,13 +373,13 @@ def forward_search(query: str, user_agent: str, limit: int = 15) -> List[Dict]:
         data = r.json()
         
         results = []
-        seen_labels = set()
-        
         for feature in data.get("features", []):
             props = feature.get("properties", {})
             coords = feature.get("geometry", {}).get("coordinates", [])
             
             if len(coords) == 2:
+                # 1. Build the full "Search Engine Name"
+                # e.g. "Colosseum, Rome, Lazio, Italy"
                 name = props.get("name")
                 city = props.get("city")
                 state = props.get("state")
@@ -387,12 +388,11 @@ def forward_search(query: str, user_agent: str, limit: int = 15) -> List[Dict]:
                 parts = [p for p in [name, city, state, country] if p]
                 display_name = ", ".join(parts)
                 
-                if display_name in seen_labels:
+                if not display_name:
                     continue
-                seen_labels.add(display_name)
                 
                 results.append({
-                    "name": display_name,
+                    "name": display_name,  # <--- The full string is now the 'name'
                     "lat": float(coords[1]),
                     "lon": float(coords[0]),
                 })
@@ -762,14 +762,15 @@ def search_api_labels(query: str) -> List[str]:
     
     lookup: Dict[str, Dict] = {}
     labels: List[str] = []
+    
     for r in results:
+        # 2. Use the Search Engine Name directly
+        # No "while label in lookup" loops. No adding (2).
         label = r["name"]
-        j = 2
-        while label in lookup:
-            label = f"{r['name']} ({j})"
-            j += 1
+        
         lookup[label] = r
-        labels.append(label)
+        if label not in labels:
+            labels.append(label)
 
     ss["search_lookup"] = lookup
     return labels
