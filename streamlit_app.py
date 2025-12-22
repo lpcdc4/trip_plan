@@ -1414,120 +1414,123 @@ else:
                 s = ss["stops"][i]
                 k_sfx = f"{i}_{b_idx}"
 
-                # --- EDIT MODE ---
+               # --- EDIT MODE ---
                 if ss.get("editing_stop_idx") == i:
                     with st.container(border=True):
                         st.subheader(f"Modifica: {s['name']}")
                         
-                        # --- 1. INCOMING LEG (Arrivo) ---
-                        new_mode_in = None
-                        new_note_in = ""
-                        has_incoming = (i > 0)
-                        
-                        if has_incoming:
-                            prev_s = ss["stops"][i-1]
-                            st.caption(f"Arrivo da {prev_s['name']}")
-                            
-                            cur_leg_in = ss["legs_between"][i-1]
-                            c_mode_in = cur_leg_in.get("mode", "—") if cur_leg_in else "—"
-                            c_note_in = cur_leg_in.get("note", "") if cur_leg_in else ""
-
-                            c_in_1, c_in_2 = st.columns([1, 2])
-                            with c_in_1:
-                                def fmt_mode(m):
-                                    return {"car": "Auto", "bus": "Bus", "train": "Treno", "plane": "Aereo", "ferry": "Traghetto", "—": "—"}.get(m, m)
-                                new_mode_in = st.selectbox("Mezzo Arrivo", ["—", "car", "bus", "train", "plane"], 
-                                                           index=["—", "car", "bus", "train", "plane"].index(c_mode_in) if c_mode_in in ["—", "car", "bus", "train", "plane"] else 0, 
-                                                           format_func=fmt_mode, key=f"edit_in_mode_{k_sfx}")
-                            with c_in_2:
-                                # CHANGED: st.text_area for multi-line
-                                new_note_in = st.text_area("Note Arrivo", c_note_in, height=70, key=f"edit_in_note_{k_sfx}")
-                            st.divider()
-
-                        # --- 2. STOP DETAILS (Luogo) ---
-                        st.caption("📍 Dettagli Tappa")
-                        
+                        # 1. SEARCH (Must be outside form to be interactive)
+                        # We do this FIRST so we can use the result to pre-fill the form
                         new_loc_label = st_searchbox(
                             search_api_labels,
                             key=f"edit_search_{k_sfx}",
-                            placeholder="Cerca nuova posizione (opzionale)...",
-                            label="Cambia Luogo"
+                            placeholder="Cerca nuova posizione...",
+                            label="Cambia Luogo (Seleziona per aggiornare nome e mappa)"
                         )
 
-                        c_stop_1, c_stop_2 = st.columns([3, 2])
-                        with c_stop_1:
-                            new_name_edit = st.text_input("Nome Tappa", s['name'], key=f"edit_name_{k_sfx}")
-                            # CHANGED: st.text_area for multi-line
-                            new_note_edit = st.text_area("Note Tappa", s.get("note", ""), height=70, key=f"edit_note_{k_sfx}")
-                        with c_stop_2:
-                            new_ov_edit = st.checkbox("Pernottamento", s.get("overnight", False), key=f"edit_ov_{k_sfx}")
-                            st.write("")
-                            if st.button("🗑 Elimina Tappa", key=f"del_btn_{k_sfx}"):
-                                old_stops = list(ss["stops"])
-                                old_legs = list(ss["legs_between"])
-                                ss["stops"] = [x for j, x in enumerate(ss["stops"]) if j != i]
-                                ss["legs_between"] = rebuild_legs_from_old(old_stops, old_legs, ss["stops"])
-                                ensure_legs_alignment()
-                                ss["map_center"] = compute_center(ss["stops"])
-                                ss["editing_stop_idx"] = None
-                                mark_dirty()
-                                st.rerun()
+                        # Logic: If search found something, use THAT as the default name/coords
+                        # otherwise use the existing stop data
+                        form_name_val = s['name']
+                        form_lat = s['lat']
+                        form_lon = s['lon']
+                        coords_changed_via_search = False
 
-                        # --- 3. OUTGOING LEG (Partenza) ---
-                        new_mode_out = None
-                        new_note_out = ""
-                        has_outgoing = (i < len(ss["stops"]) - 1)
-                        
-                        if has_outgoing:
-                            next_s = ss["stops"][i+1]
-                            st.divider()
-                            st.caption(f"Partenza verso {next_s['name']}")
-                            
-                            cur_leg_out = ss["legs_between"][i]
-                            c_mode_out = cur_leg_out.get("mode", "—") if cur_leg_out else "—"
-                            c_note_out = cur_leg_out.get("note", "") if cur_leg_out else ""
-                            
-                            c_out_1, c_out_2 = st.columns([1, 2])
-                            with c_out_1:
-                                new_mode_out = st.selectbox("Mezzo Partenza", ["—", "car", "bus", "train", "plane"], 
-                                                            index=["—", "car", "bus", "train", "plane"].index(c_mode_out) if c_mode_out in ["—", "car", "bus", "train", "plane"] else 0, 
-                                                            format_func=fmt_mode, key=f"edit_out_mode_{k_sfx}")
-                            with c_out_2:
-                                # CHANGED: st.text_area for multi-line
-                                new_note_out = st.text_area("Note Partenza", c_note_out, height=70, key=f"edit_out_note_{k_sfx}")
+                        if new_loc_label:
+                            found = ss.get("search_lookup", {}).get(new_loc_label)
+                            if found:
+                                form_name_val = found['name'] # <--- AUTO-UPDATE LABEL
+                                form_lat = found['lat']
+                                form_lon = found['lon']
+                                coords_changed_via_search = True
 
-                        st.write("") 
-                        if st.button("💾 Salva Tutto", key=f"save_{k_sfx}", type="primary", use_container_width=True):
+                        # 2. THE FORM (Fixes the "Lag/Slowness" issue)
+                        # All text inputs go here so they don't trigger reruns while typing
+                        with st.form(key=f"edit_form_{k_sfx}"):
                             
-                            # A. UPDATE STOP INFO
-                            ss["stops"][i]["name"] = new_name_edit
-                            ss["stops"][i]["note"] = new_note_edit
-                            ss["stops"][i]["overnight"] = new_ov_edit
+                            # --- INCOMING LEG ---
+                            new_mode_in = None
+                            new_note_in = ""
+                            has_incoming = (i > 0)
                             
-                            # Check Coordinate Change
-                            coords_changed = False
-                            if new_loc_label:
-                                new_loc_data = ss.get("search_lookup", {}).get(new_loc_label)
-                                if new_loc_data:
-                                    ss["stops"][i]["lat"] = new_loc_data["lat"]
-                                    ss["stops"][i]["lon"] = new_loc_data["lon"]
-                                    coords_changed = True
-                                    ss["map_center"] = (new_loc_data["lat"], new_loc_data["lon"])
-
-                            # B. UPDATE INCOMING LEG (i-1)
                             if has_incoming:
-                                idx_in = i - 1
-                                old_leg_in = ss["legs_between"][idx_in]
-                                old_mode_in = old_leg_in.get("mode") if old_leg_in else None
+                                prev_s = ss["stops"][i-1]
+                                st.caption(f"🏁 Arrivo da {prev_s['name']}")
+                                cur_leg_in = ss["legs_between"][i-1]
+                                c_mode_in = cur_leg_in.get("mode", "—") if cur_leg_in else "—"
+                                c_note_in = cur_leg_in.get("note", "") if cur_leg_in else ""
+
+                                c_in_1, c_in_2 = st.columns([1, 2])
+                                with c_in_1:
+                                    def fmt_mode(m):
+                                        return {"car": "Auto", "bus": "Bus", "train": "Treno", "plane": "Aereo", "ferry": "Traghetto", "—": "—"}.get(m, m)
+                                    new_mode_in = st.selectbox("Mezzo Arrivo", ["—", "car", "bus", "train", "plane"], 
+                                                               index=["—", "car", "bus", "train", "plane"].index(c_mode_in) if c_mode_in in ["—", "car", "bus", "train", "plane"] else 0, 
+                                                               format_func=fmt_mode)
+                                with c_in_2:
+                                    new_note_in = st.text_area("Note Arrivo", c_note_in, height=70)
+                                st.divider()
+
+                            # --- STOP DETAILS ---
+                            st.caption("📍 Dettagli Tappa")
+                            c_stop_1, c_stop_2 = st.columns([3, 2])
+                            with c_stop_1:
+                                # Use the searched name as the value
+                                new_name_edit = st.text_input("Nome Tappa", value=form_name_val)
+                                new_note_edit = st.text_area("Note Tappa", s.get("note", ""), height=70)
+                            with c_stop_2:
+                                new_ov_edit = st.checkbox("Pernottamento", s.get("overnight", False))
+                                st.caption("(Per eliminare, esci dalla modifica e usa il menu Riordina)")
+
+                            # --- OUTGOING LEG ---
+                            new_mode_out = None
+                            new_note_out = ""
+                            has_outgoing = (i < len(ss["stops"]) - 1)
+                            
+                            if has_outgoing:
+                                next_s = ss["stops"][i+1]
+                                st.divider()
+                                st.caption(f"🚀 Partenza verso {next_s['name']}")
+                                cur_leg_out = ss["legs_between"][i]
+                                c_mode_out = cur_leg_out.get("mode", "—") if cur_leg_out else "—"
+                                c_note_out = cur_leg_out.get("note", "") if cur_leg_out else ""
                                 
-                                recalc_in = coords_changed or (new_mode_in != old_mode_in) or (new_mode_in != "—" and not old_leg_in)
+                                c_out_1, c_out_2 = st.columns([1, 2])
+                                with c_out_1:
+                                    new_mode_out = st.selectbox("Mezzo Partenza", ["—", "car", "bus", "train", "plane"], 
+                                                                index=["—", "car", "bus", "train", "plane"].index(c_mode_out) if c_mode_out in ["—", "car", "bus", "train", "plane"] else 0, 
+                                                                format_func=fmt_mode)
+                                with c_out_2:
+                                    new_note_out = st.text_area("Note Partenza", c_note_out, height=70)
+
+                            st.write("") 
+                            
+                            # SAVE BUTTON (This is the ONLY thing that triggers the heavy processing now)
+                            if st.form_submit_button("💾 Salva Modifiche", type="primary", use_container_width=True):
                                 
-                                if new_mode_in == "—":
-                                    ss["legs_between"][idx_in] = None
-                                elif recalc_in:
-                                    p_stop = ss["stops"][idx_in]
-                                    c_stop = ss["stops"][i]
-                                    with st.spinner("Ricalcolo arrivo..."):
+                                # A. UPDATE STOP
+                                ss["stops"][i]["name"] = new_name_edit
+                                ss["stops"][i]["note"] = new_note_edit
+                                ss["stops"][i]["overnight"] = new_ov_edit
+                                ss["stops"][i]["lat"] = form_lat
+                                ss["stops"][i]["lon"] = form_lon
+                                
+                                if coords_changed_via_search:
+                                    ss["map_center"] = (form_lat, form_lon)
+
+                                # B. UPDATE INCOMING LEG
+                                if has_incoming:
+                                    idx_in = i - 1
+                                    old_leg_in = ss["legs_between"][idx_in]
+                                    old_mode_in = old_leg_in.get("mode") if old_leg_in else None
+                                    
+                                    recalc_in = coords_changed_via_search or (new_mode_in != old_mode_in) or (new_mode_in != "—" and not old_leg_in)
+                                    
+                                    if new_mode_in == "—":
+                                        ss["legs_between"][idx_in] = None
+                                    elif recalc_in:
+                                        p_stop = ss["stops"][idx_in]
+                                        c_stop = ss["stops"][i]
+                                        # No spinner inside form submit, just run it
                                         if new_mode_in in {"car", "bus", "train"}:
                                             route = osrm_driving_route(p_stop["lat"], p_stop["lon"], c_stop["lat"], c_stop["lon"])
                                             ss["legs_between"][idx_in] = {"mode": new_mode_in, "note": new_note_in, **route}
@@ -1536,24 +1539,23 @@ else:
                                                 "mode": "plane", "note": new_note_in, "distance_m": None, "duration_s": None,
                                                 "geometry_latlon": interpolate_line(p_stop["lat"], p_stop["lon"], c_stop["lat"], c_stop["lon"])
                                             }
-                                else:
-                                    if ss["legs_between"][idx_in]:
-                                        ss["legs_between"][idx_in]["note"] = new_note_in
+                                    else:
+                                        if ss["legs_between"][idx_in]:
+                                            ss["legs_between"][idx_in]["note"] = new_note_in
 
-                            # C. UPDATE OUTGOING LEG (i)
-                            if has_outgoing:
-                                idx_out = i
-                                old_leg_out = ss["legs_between"][idx_out]
-                                old_mode_out = old_leg_out.get("mode") if old_leg_out else None
+                                # C. UPDATE OUTGOING LEG
+                                if has_outgoing:
+                                    idx_out = i
+                                    old_leg_out = ss["legs_between"][idx_out]
+                                    old_mode_out = old_leg_out.get("mode") if old_leg_out else None
 
-                                recalc_out = coords_changed or (new_mode_out != old_mode_out) or (new_mode_out != "—" and not old_leg_out)
-                                
-                                if new_mode_out == "—":
-                                    ss["legs_between"][idx_out] = None
-                                elif recalc_out:
-                                    c_stop = ss["stops"][i]
-                                    n_stop = ss["stops"][i+1]
-                                    with st.spinner("Ricalcolo partenza..."):
+                                    recalc_out = coords_changed_via_search or (new_mode_out != old_mode_out) or (new_mode_out != "—" and not old_leg_out)
+                                    
+                                    if new_mode_out == "—":
+                                        ss["legs_between"][idx_out] = None
+                                    elif recalc_out:
+                                        c_stop = ss["stops"][i]
+                                        n_stop = ss["stops"][i+1]
                                         if new_mode_out in {"car", "bus", "train"}:
                                             route = osrm_driving_route(c_stop["lat"], c_stop["lon"], n_stop["lat"], n_stop["lon"])
                                             ss["legs_between"][idx_out] = {"mode": new_mode_out, "note": new_note_out, **route}
@@ -1562,13 +1564,13 @@ else:
                                                 "mode": "plane", "note": new_note_out, "distance_m": None, "duration_s": None,
                                                 "geometry_latlon": interpolate_line(c_stop["lat"], c_stop["lon"], n_stop["lat"], n_stop["lon"])
                                             }
-                                else:
-                                    if ss["legs_between"][idx_out]:
-                                        ss["legs_between"][idx_out]["note"] = new_note_out
+                                    else:
+                                        if ss["legs_between"][idx_out]:
+                                            ss["legs_between"][idx_out]["note"] = new_note_out
 
-                            ss["editing_stop_idx"] = None
-                            mark_dirty()
-                            st.rerun()
+                                ss["editing_stop_idx"] = None
+                                mark_dirty()
+                                st.rerun()
 
                 else:
                     # --- NORMAL VIEW ---
