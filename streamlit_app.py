@@ -1733,11 +1733,12 @@ if ss.get("can_edit"):
                         # Instead, we delete 'initialized' and 'current_trip_id' so init_state() 
                         # knows it must run fresh and overwrite the data.
                         
-                        if "initialized" in ss: 
-                            del ss["initialized"]
-                        
-                        if "current_trip_id" in ss:
-                            del ss["current_trip_id"]
+                        # 3. SAFER RESET STATE
+                        # We force init_state to run from scratch
+                        keys_to_clear = ["initialized", "current_trip_id", "stops", "legs_between", "trip_name"]
+                        for k in keys_to_clear:
+                            if k in ss:
+                                del ss[k]
                         
                         # Clear URL
                         if hasattr(st, "query_params"): 
@@ -1747,6 +1748,7 @@ if ss.get("can_edit"):
                             
                         # Force reload
                         st.rerun()
+                        
                         
                     except Exception as e:
                         st.error(f"Errore durante l'eliminazione: {e}")
