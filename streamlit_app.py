@@ -1212,6 +1212,7 @@ else:
                     st.button("✏️ Modifica Giorno", key=f"btn_edit_{b_idx}", on_click=lambda idx=b_idx: ss.update({"editing_day_idx": idx}))
             
             # EDIT MODE
+            # EDIT MODE
             else:
                 st.markdown(f"#### ✏️ Modifica Giorno {b['day']}")
                 
@@ -1231,18 +1232,24 @@ else:
                         idx_m = modes.index(cur_m) if cur_m in modes else 0
                         
                         def update_inc_leg(idx=b["start"]-1):
-                            n_m = st.session_state[f"inc_mode_{b_idx}"]
-                            n_n = st.session_state[f"inc_note_{b_idx}"]
+                            # FIX: Use .get() to prevent KeyError on Enter
+                            n_m = st.session_state.get(f"inc_mode_{b_idx}")
+                            n_n = st.session_state.get(f"inc_note_{b_idx}")
+                            
+                            # Safety check: if keys are missing during reload, skip update
+                            if n_m is None: return
+
                             old = ss["legs_between"][idx]
                             
                             if n_m == "—":
                                 ss["legs_between"][idx] = None
                             elif (n_m != "—") and (not old or old.get("mode") != n_m):
                                 A, B = ss["stops"][idx], ss["stops"][idx+1]
-                                # FORCE GOOGLE
                                 try:
-                                    rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                    rt["source"] = "google"
+                                    if "google_driving_route" in globals():
+                                        rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                        rt["source"] = "google"
+                                    else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                 except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
                                 if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None})
@@ -1311,26 +1318,32 @@ else:
                                         else:
                                             leg["geometry_latlon"] = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
-                                # --- NEW: Close the edit panel automatically ---
+                                # Close edit panel automatically
                                 ss["editing_day_idx"] = None
                                 
                                 mark_dirty()
                                 st.rerun()
 
-                    # --- STOP FIELDS (NO NAME) ---
+                    # --- STOP FIELDS ---
                     def update_stop(idx=i, k=k_sfx):
-                        ss["stops"][idx]["note"] = st.session_state[f"d_note_{k}"]
-                        ss["stops"][idx]["overnight"] = st.session_state[f"d_ov_{k}"]
+                        # FIX: Use .get() here too just in case
+                        if f"d_name_{k}" in st.session_state:
+                            ss["stops"][idx]["name"] = st.session_state[f"d_name_{k}"]
+                        if f"d_note_{k}" in st.session_state:
+                            ss["stops"][idx]["note"] = st.session_state[f"d_note_{k}"]
+                        if f"d_ov_{k}" in st.session_state:
+                            ss["stops"][idx]["overnight"] = st.session_state[f"d_ov_{k}"]
                         mark_dirty()
 
-                    c_nt, c_ov = st.columns([4, 1])
+                    c_nm, c_nt, c_ov = st.columns([2, 3, 1])
+                    with c_nm:
+                        st.text_input("Nome", value=s['name'], key=f"d_name_{k_sfx}", on_change=update_stop)
                     with c_nt:
                         st.text_input("Note", value=s.get("note", ""), key=f"d_note_{k_sfx}", on_change=update_stop)
                     with c_ov:
-                        st.write("")
-                        st.write("")
                         st.checkbox("Pernottamento", value=s.get("overnight", False), key=f"d_ov_{k_sfx}", on_change=update_stop)
 
+                    # --- OUTGOING LEG ---
                     if i < len(ss["stops"]) - 1:
                         leg = ss["legs_between"][i]
                         st.caption(f"🔻 Verso {ss['stops'][i+1]['name']}")
@@ -1339,18 +1352,23 @@ else:
                         l_n = leg.get("note", "") if leg else ""
                         
                         def update_leg(idx=i, k=k_sfx):
-                            n_m = st.session_state[f"d_mode_{k}"]
-                            n_n = st.session_state[f"d_lnote_{k}"]
+                            # FIX: Use .get() to prevent KeyError on Enter
+                            n_m = st.session_state.get(f"d_mode_{k}")
+                            n_n = st.session_state.get(f"d_lnote_{k}")
+
+                            if n_m is None: return
+
                             old = ss["legs_between"][idx]
                             
                             if n_m == "—":
                                 ss["legs_between"][idx] = None
                             elif (n_m != "—") and (not old or old.get("mode") != n_m):
                                 A, B = ss["stops"][idx], ss["stops"][idx+1]
-                                # FORCE GOOGLE
                                 try:
-                                    rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                    rt["source"] = "google"
+                                    if "google_driving_route" in globals():
+                                        rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                        rt["source"] = "google"
+                                    else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                 except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
                                 if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None})
@@ -1368,6 +1386,7 @@ else:
                             st.text_input("Note Leg", value=l_n, key=f"d_lnote_{k_sfx}", label_visibility="collapsed", on_change=update_leg)
                         st.divider()
 
+                # Close Button
                 if st.button("✅ Chiudi Modifica", key=f"close_{b_idx}"):
                     ss["editing_day_idx"] = None
                     st.rerun()
