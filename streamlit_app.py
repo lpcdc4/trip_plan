@@ -1364,7 +1364,7 @@ else:
     blocks = itinerary_day_blocks(ss["stops"], ss["legs_between"])
     
     for b_idx, b in enumerate(blocks):
-        # --- Header Calculation (Same as before) ---
+        # --- Header Calculation ---
         start_stop = ss["stops"][b["start"]]
         end_stop = ss["stops"][b["end"]]
         date_str = fmt_date(b["date"])
@@ -1412,167 +1412,32 @@ else:
             else:
                 st.markdown(f"#### ✏️ Modifica Giorno {b['day']}")
                 
-                # A. HANDLE LOCATION CHANGES (Interactive, Outside Form)
-                # We loop first to check if any location changed. If so, we update & rerun IMMEDIATELY.
-                # This prevents the "Form Loop" issues.
-                force_rerun = False
-                
-                for i in range(b["start"], b["end"] + 1):
-                    s = ss["stops"][i]
-                    # Search Box for THIS stop
-                    new_loc = st_searchbox(
-                        search_api_labels,
-                        key=f"search_{b_idx}_{i}",
-                        placeholder=f"Cambia luogo: {s['name']}",
-                        label=None
-                    )
+                # 1. Incoming Leg (Start of Day)
+                if b["start"] > 0:
+                    prev_stop = ss["stops"][b["start"]-1]
+                    inc_leg = ss["legs_between"][b["start"]-1]
+                    st.caption(f"🏁 **Arrivo da {prev_stop['name']}**")
                     
-                    # If user selected a new place
-                    if new_loc:
-                        found = ss.get("search_lookup", {}).get(new_loc)
-                        if found:
-                            # 1. Update Stop Data
-                            ss["stops"][i]["lat"] = found["lat"]
-                            ss["stops"][i]["lon"] = found["lon"]
-                            ss["stops"][i]["name"] = found["name"] # Auto-update name
-                            ss["map_center"] = (found["lat"], found["lon"])
-                            
-                            # 2. Recalculate Routes (Incoming & Outgoing)
-                            # Incoming
-                            if i > 0:
-                                prev, curr = ss["stops"][i-1], ss["stops"][i]
-                                l_idx = i - 1
-                                if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
-                                    try:
-                                        if "google_driving_route" in globals():
-                                            rt = google_driving_route(prev["lat"], prev["lon"], curr["lat"], curr["lon"])
-                                            rt["source"] = "google"
-                                        else:
-                                            rt = osrm_driving_route(prev["lat"], prev["lon"], curr["lat"], curr["lon"])
-                                        ss["legs_between"][l_idx].update(rt)
-                                    except: pass
-
-                            # Outgoing
-                            if i < len(ss["stops"]) - 1:
-                                curr, next_s = ss["stops"][i], ss["stops"][i+1]
-                                l_idx = i
-                                if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
-                                    try:
-                                        if "google_driving_route" in globals():
-                                            rt = google_driving_route(curr["lat"], curr["lon"], next_s["lat"], next_s["lon"])
-                                            rt["source"] = "google"
-                                        else:
-                                            rt = osrm_driving_route(curr["lat"], curr["lon"], next_s["lat"], next_s["lon"])
-                                        ss["legs_between"][l_idx].update(rt)
-                                    except: pass
-                            
-                            force_rerun = True
-                            mark_dirty()
-                            break # Stop loop to prevent conflicts, rerun will restart it
-
-                if force_rerun:
-                    st.rerun()
-
-                # B. THE FORM (Notes, Names, Modes)
-                with st.form(key=f"day_form_{b_idx}"):
+                    cur_m = inc_leg.get("mode", "—") if inc_leg else "—"
+                    cur_n = inc_leg.get("note", "") if inc_leg else ""
                     
-                    # 1. Incoming Leg (Start of Day)
-                    if b["start"] > 0:
-                        prev_stop = ss["stops"][b["start"]-1]
-                        inc_leg = ss["legs_between"][b["start"]-1]
-                        st.caption(f"🏁 **Arrivo da {prev_stop['name']}**")
+                    c1, c2 = st.columns([1, 3])
+                    with c1:
+                        def fmt_m(m): return {"car":"Auto","bus":"Bus","train":"Treno","plane":"Aereo","ferry":"Traghetto","—":"—"}.get(m, m)
+                        modes = ["—", "car", "bus", "train", "plane", "ferry"]
+                        idx_m = modes.index(cur_m) if cur_m in modes else 0
                         
-                        cur_m = inc_leg.get("mode", "—") if inc_leg else "—"
-                        cur_n = inc_leg.get("note", "") if inc_leg else ""
-                        
-                        c1, c2 = st.columns([1, 3])
-                        with c1:
-                            def fmt_m(m): return {"car":"Auto","bus":"Bus","train":"Treno","plane":"Aereo","ferry":"Traghetto","—":"—"}.get(m, m)
-                            modes = ["—", "car", "bus", "train", "plane", "ferry"]
-                            idx_m = modes.index(cur_m) if cur_m in modes else 0
-                            st.selectbox("Mezzo", modes, index=idx_m, format_func=fmt_m, key=f"inc_mode_{b_idx}")
-                        with c2:
-                            st.text_input("Note Arrivo", value=cur_n, key=f"inc_note_{b_idx}")
-                        st.divider()
-
-                    # 2. Stops Loop
-                    for i in range(b["start"], b["end"] + 1):
-                        s = ss["stops"][i]
-                        k_sfx = f"{b_idx}_{i}"
-                        
-                        # Stop Inputs
-                        c_nm, c_nt, c_ov = st.columns([2, 3, 1])
-                        with c_nm:
-                            st.text_input("Nome", value=s['name'], key=f"d_name_{k_sfx}")
-                        with c_nt:
-                            st.text_input("Note", value=s.get("note", ""), key=f"d_note_{k_sfx}")
-                        with c_ov:
-                            st.checkbox("Notte", value=s.get("overnight", False), key=f"d_ov_{k_sfx}")
-
-                        # Leg to Next Stop
-                        if i < len(ss["stops"]) - 1:
-                            leg = ss["legs_between"][i]
-                            st.caption(f"🔻 Verso {ss['stops'][i+1]['name']}")
+                        # CALLBACK: Update Incoming Leg
+                        def update_inc_leg(idx=b["start"]-1):
+                            n_m = st.session_state[f"inc_mode_{b_idx}"]
+                            n_n = st.session_state[f"inc_note_{b_idx}"]
                             
-                            l_m = leg.get("mode", "—") if leg else "—"
-                            l_n = leg.get("note", "") if leg else ""
-                            
-                            lc1, lc2 = st.columns([1, 4])
-                            with lc1:
-                                idx_l = modes.index(l_m) if l_m in modes else 0
-                                st.selectbox("Mezzo", modes, index=idx_l, format_func=fmt_m, key=f"d_mode_{k_sfx}", label_visibility="collapsed")
-                            with lc2:
-                                st.text_input("Note Leg", value=l_n, key=f"d_lnote_{k_sfx}", label_visibility="collapsed")
-                            st.divider()
-
-                    submitted = st.form_submit_button("💾 Salva Modifiche", type="primary")
-
-                if submitted:
-                    # Apply INCOMING Leg Changes
-                    if b["start"] > 0:
-                        l_idx = b["start"] - 1
-                        n_m = st.session_state[f"inc_mode_{b_idx}"]
-                        n_n = st.session_state[f"inc_note_{b_idx}"]
-                        
-                        old = ss["legs_between"][l_idx]
-                        if n_m == "—":
-                            ss["legs_between"][l_idx] = None
-                        elif (n_m != "—") and (not old or old.get("mode") != n_m):
-                            A, B = ss["stops"][l_idx], ss["stops"][l_idx+1]
-                            try:
-                                if "google_driving_route" in globals():
-                                    rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                    rt["source"] = "google"
-                                else:
-                                    rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                            except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
-                            
-                            if n_m == "plane": rt = {"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None, "geometry_latlon": interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])}
-                            else: rt.update({"mode": n_m, "note": n_n})
-                            ss["legs_between"][l_idx] = rt
-                        elif ss["legs_between"][l_idx]:
-                            ss["legs_between"][l_idx]["note"] = n_n
-
-                    # Apply STOPS & OUTGOING Changes
-                    for i in range(b["start"], b["end"] + 1):
-                        k_sfx = f"{b_idx}_{i}"
-                        
-                        # Stop
-                        ss["stops"][i]["name"] = st.session_state[f"d_name_{k_sfx}"]
-                        ss["stops"][i]["note"] = st.session_state[f"d_note_{k_sfx}"]
-                        ss["stops"][i]["overnight"] = st.session_state[f"d_ov_{k_sfx}"]
-                        
-                        # Leg
-                        if i < len(ss["stops"]) - 1:
-                            l_idx = i
-                            n_m = st.session_state[f"d_mode_{k_sfx}"]
-                            n_n = st.session_state[f"d_lnote_{k_sfx}"]
-                            
-                            old = ss["legs_between"][l_idx]
+                            old = ss["legs_between"][idx]
+                            # Recalc if mode changed
                             if n_m == "—":
-                                ss["legs_between"][l_idx] = None
+                                ss["legs_between"][idx] = None
                             elif (n_m != "—") and (not old or old.get("mode") != n_m):
-                                A, B = ss["stops"][l_idx], ss["stops"][l_idx+1]
+                                A, B = ss["stops"][idx], ss["stops"][idx+1]
                                 try:
                                     if "google_driving_route" in globals():
                                         rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
@@ -1583,13 +1448,130 @@ else:
                                 
                                 if n_m == "plane": rt = {"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None, "geometry_latlon": interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])}
                                 else: rt.update({"mode": n_m, "note": n_n})
-                                ss["legs_between"][l_idx] = rt
-                            elif ss["legs_between"][l_idx]:
-                                ss["legs_between"][l_idx]["note"] = n_n
+                                ss["legs_between"][idx] = rt
+                            elif ss["legs_between"][idx]:
+                                ss["legs_between"][idx]["note"] = n_n
+                            mark_dirty()
 
+                        st.selectbox("Mezzo", modes, index=idx_m, format_func=fmt_m, key=f"inc_mode_{b_idx}", on_change=update_inc_leg)
+                    with c2:
+                        st.text_input("Note Arrivo", value=cur_n, key=f"inc_note_{b_idx}", on_change=update_inc_leg)
+                    st.divider()
+
+                # 2. Stops Loop
+                for i in range(b["start"], b["end"] + 1):
+                    s = ss["stops"][i]
+                    k_sfx = f"{b_idx}_{i}"
+                    
+                    # --- LOCATION SEARCH (DIRECT CHANGE) ---
+                    # We put this alone in a row to keep it clean, or above the fields
+                    new_loc = st_searchbox(
+                        search_api_labels,
+                        key=f"search_{k_sfx}",
+                        placeholder=f"📍 Cambia luogo per {s['name']}...",
+                        label=None
+                    )
+                    
+                    # LOGIC: If search returns result, update Stop AND Name
+                    if new_loc:
+                        found = ss.get("search_lookup", {}).get(new_loc)
+                        if found:
+                            # Update Coordinates
+                            ss["stops"][i]["lat"] = found["lat"]
+                            ss["stops"][i]["lon"] = found["lon"]
+                            ss["stops"][i]["name"] = found["name"] # Auto-update Label
+                            ss["map_center"] = (found["lat"], found["lon"])
+                            
+                            # Recalc Routes (Incoming & Outgoing)
+                            # 1. Incoming
+                            if i > 0:
+                                l_idx = i - 1
+                                if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
+                                    A, B = ss["stops"][l_idx], ss["stops"][i]
+                                    try:
+                                        if "google_driving_route" in globals():
+                                            rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            rt["source"] = "google"
+                                        else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                        ss["legs_between"][l_idx].update(rt)
+                                    except: pass
+                            # 2. Outgoing
+                            if i < len(ss["stops"]) - 1:
+                                l_idx = i
+                                if ss["legs_between"][l_idx] and ss["legs_between"][l_idx]["mode"] in {"car","bus","train"}:
+                                    A, B = ss["stops"][i], ss["stops"][i+1]
+                                    try:
+                                        if "google_driving_route" in globals():
+                                            rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            rt["source"] = "google"
+                                        else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                        ss["legs_between"][l_idx].update(rt)
+                                    except: pass
+                                    
+                            mark_dirty()
+                            st.rerun()
+
+                    # --- STOP FIELDS ---
+                    # Defining callbacks to save immediately on blur/enter
+                    def update_stop(idx=i, k=k_sfx):
+                        ss["stops"][idx]["name"] = st.session_state[f"d_name_{k}"]
+                        ss["stops"][idx]["note"] = st.session_state[f"d_note_{k}"]
+                        ss["stops"][idx]["overnight"] = st.session_state[f"d_ov_{k}"]
+                        mark_dirty()
+
+                    c_nm, c_nt, c_ov = st.columns([2, 3, 1])
+                    with c_nm:
+                        st.text_input("Nome", value=s['name'], key=f"d_name_{k_sfx}", on_change=update_stop)
+                    with c_nt:
+                        st.text_input("Note", value=s.get("note", ""), key=f"d_note_{k_sfx}", on_change=update_stop)
+                    with c_ov:
+                        # Label changed to "Pernottamento" as requested
+                        st.checkbox("Pernottamento", value=s.get("overnight", False), key=f"d_ov_{k_sfx}", on_change=update_stop)
+
+                    # --- OUTGOING LEG ---
+                    if i < len(ss["stops"]) - 1:
+                        leg = ss["legs_between"][i]
+                        st.caption(f"🔻 Verso {ss['stops'][i+1]['name']}")
+                        
+                        l_m = leg.get("mode", "—") if leg else "—"
+                        l_n = leg.get("note", "") if leg else ""
+                        
+                        def update_leg(idx=i, k=k_sfx):
+                            n_m = st.session_state[f"d_mode_{k}"]
+                            n_n = st.session_state[f"d_lnote_{k}"]
+                            old = ss["legs_between"][idx]
+                            
+                            if n_m == "—":
+                                ss["legs_between"][idx] = None
+                            elif (n_m != "—") and (not old or old.get("mode") != n_m):
+                                A, B = ss["stops"][idx], ss["stops"][idx+1]
+                                try:
+                                    if "google_driving_route" in globals():
+                                        rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                        rt["source"] = "google"
+                                    else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                
+                                if n_m == "plane": rt = {"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None, "geometry_latlon": interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])}
+                                else: rt.update({"mode": n_m, "note": n_n})
+                                ss["legs_between"][idx] = rt
+                            elif ss["legs_between"][idx]:
+                                ss["legs_between"][idx]["note"] = n_n
+                            mark_dirty()
+
+                        lc1, lc2 = st.columns([1, 4])
+                        with lc1:
+                            idx_l = modes.index(l_m) if l_m in modes else 0
+                            st.selectbox("Mezzo", modes, index=idx_l, format_func=fmt_m, key=f"d_mode_{k_sfx}", label_visibility="collapsed", on_change=update_leg)
+                        with lc2:
+                            st.text_input("Note Leg", value=l_n, key=f"d_lnote_{k_sfx}", label_visibility="collapsed", on_change=update_leg)
+                        st.divider()
+
+                # Close Button
+                if st.button("✅ Chiudi Modifica", key=f"close_{b_idx}"):
                     ss["editing_day_idx"] = None
-                    mark_dirty()
                     st.rerun()
+
 # Autosave
 if ss.get("dirty", False):
     save_to_supabase()
