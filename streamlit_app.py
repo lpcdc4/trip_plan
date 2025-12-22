@@ -116,6 +116,7 @@ def get_trip_id_from_url():
     return None
      
 @st.cache_data(ttl=10, show_spinner=False)
+@st.cache_data(ttl=10, show_spinner=False)
 def get_all_trips_summary():
     """Fetches a list of (id, name, last_updated) for all trips in DB."""
     try:
@@ -123,6 +124,12 @@ def get_all_trips_summary():
         trips = []
         for row in res.data:
             t_data = row.get("trip_data", {})
+            
+            # --- NEW: Filter out soft-deleted trips ---
+            if t_data.get("is_deleted") is True:
+                continue
+            # ------------------------------------------
+
             name = t_data.get("name", "Senza Nome")
             # Fetch timestamp, default to empty string if missing
             last_updated = t_data.get("last_updated", "")
@@ -1591,3 +1598,67 @@ else:
 # Autosave
 if ss["dirty"]:
     save_to_supabase()
+
+
+# ==============================================================================
+# FOOTER: DANGER ZONE (Soft Delete)
+# ==============================================================================
+if ss.get("can_edit"):
+    st.divider()
+    with st.expander("🚨 Zona Pericolo (Elimina Viaggio)"):
+        st.write(f"Stai per eliminare: **{ss['trip_name']}**")
+        st.caption("Il viaggio verrà nascosto dalla lista, ma rimarrà nel database (potrai ripristinarlo manualmente da Supabase rimuovendo il flag 'is_deleted').")
+        
+        # Use session state to handle the confirmation flow
+        if "confirm_delete" not in ss:
+            ss["confirm_delete"] = False
+
+        if not ss["confirm_delete"]:
+            if st.button("🗑 Nascondi/Elimina Viaggio"):
+                ss["confirm_delete"] = True
+                st.rerun()
+        else:
+            st.warning("Sei sicuro? Il viaggio non sarà più visibile nell'app.")
+            col_d1, col_d2 = st.columns([1, 1])
+            with col_d1:
+                if st.button("❌ Annulla"):
+                    ss["confirm_delete"] = False
+                    st.rerun()
+            with col_d2:
+                if st.button("✅ Conferma Eliminazione", type="primary"):
+                    # 1. Prepare data with is_deleted = True
+                    trip_id = ss["current_trip_id"]
+                    data_to_save = {
+                        "name": ss["trip_name"],
+                        "trip_start_date": ss["trip_start_date"].isoformat(),
+                        "stops": ss["stops"],
+                        "legs_between": ss["legs_between"],
+                        "last_updated": datetime.now().isoformat(),
+                        "is_deleted": True  # <--- The Soft Delete Flag
+                    }
+
+                    # 2. Push to Supabase
+                    try:
+                        supabase.table("itineraries").upsert({
+                            "trip_id": trip_id, 
+                            "trip_data": data_to_save
+                        }).execute()
+                        
+                        st.success("Viaggio eliminato.")
+                        
+                        # 3. Reset State to force a reload (which will pick a different trip or create new)
+                        # We clear the specific session keys to force init_state to run fresh
+                        for key in ["initialized", "current_trip_id", "stops", "trip_name"]:
+                            if key in ss: del ss[key]
+                        
+                        # Remove URL param to prevent reloading the deleted trip
+                        if hasattr(st, "query_params"): 
+                            st.query_params.clear()
+                        else:
+                            st.experimental_set_query_params()
+                            
+                        # Force reload
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Errore durante l'eliminazione: {e}")
