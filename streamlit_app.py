@@ -52,7 +52,6 @@ except Exception:
 
 try:
     # Initialize Google Maps Client
-    # NOTE: Ensure 'Geocoding API' and 'Directions API' are enabled in Google Cloud Console
     GMAPS_KEY = st.secrets["GOOGLE_MAPS_KEY"]
     gmaps = googlemaps.Client(key=GMAPS_KEY)
 except Exception:
@@ -312,13 +311,10 @@ def fetch_locations_google(query: str) -> List[Dict]:
         return []
 
     try:
-        # language='it' to get Italian names for cities/countries
         results_raw = gmaps.geocode(query, language='it')
         
         results = []
         for r in results_raw:
-            # Google returns "formatted_address" which is usually perfect
-            # e.g., "Colosseo, Piazza del Colosseo, 1, Roma RM, Italia"
             display_name = r.get("formatted_address", query)
             loc = r.get("geometry", {}).get("location", {})
             
@@ -330,8 +326,6 @@ def fetch_locations_google(query: str) -> List[Dict]:
                 })
         return results
     except Exception as e:
-        # Fail silently in UI but return empty so user sees "No options"
-        # If debugging is needed, use st.error(e) temporarily
         return []
 
 
@@ -417,11 +411,19 @@ def leg_summary(leg: Optional[Dict]) -> str:
         "car": "Auto", "bus": "Bus", "train": "Treno", "plane": "Aereo", "ferry": "Traghetto"
     }
     display_mode = mode_map.get(mode_raw, mode_raw.title())
+    
+    # Check status
+    status = leg.get("booking_status", "todo")
+    status_icon = ""
+    if status == "booked": status_icon = " ✅"
+    elif status == "provisional": status_icon = " ⚠️"
+    
     if mode_raw in {"car", "bus", "train", "auto"} and leg.get("distance_m") is not None and leg.get("duration_s") is not None:
         km = leg["distance_m"] / 1000.0
         hhmm = hhmm_from_seconds(leg["duration_s"])
-        return f"{display_mode} · {km:.1f} km · {hhmm}"
-    return display_mode
+        return f"{display_mode}{status_icon} · {km:.1f} km · {hhmm}"
+        
+    return f"{display_mode}{status_icon}"
 
 
 # ----------------------- Overnight-as-night blocks -----------------------
@@ -495,9 +497,20 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
 
     for s in stops:
         is_overnight = s.get("overnight")
+        status = s.get("booking_status", "todo")
+        
         if is_overnight:
-            icon = folium.Icon(color="blue", icon="bed", prefix="fa")
-            od_str = "Sì"
+            if status == "booked":
+                icon_color = "green"
+                od_str = "Sì (Prenotato)"
+            elif status == "provisional":
+                icon_color = "orange"
+                od_str = "Sì (Provvisorio)"
+            else:
+                icon_color = "red"
+                od_str = "Sì (Da prenotare)"
+            
+            icon = folium.Icon(color=icon_color, icon="bed", prefix="fa")
         else:
             icon = folium.Icon(color="gray", icon="map-pin", prefix="fa")
             od_str = "No"
@@ -522,6 +535,17 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         elif mode == "plane":
             dash = "8,10"
 
+        booking_status = leg.get("booking_status", "todo")
+        # Color logic: Green (Booked) > Orange (Provisional) > Blue (Todo)
+        # Note: We prioritize status color over mode color.
+        if booking_status == "booked":
+            color = "green"
+        elif booking_status == "provisional":
+            color = "orange"
+        else:
+            # Default
+            color = "#3388ff"
+
         mode_map = {
             "car": "Auto", "bus": "Bus", "train": "Treno", 
             "plane": "Aereo", "ferry": "Traghetto"
@@ -534,8 +558,6 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
             tooltip += f" · {hhmm_from_seconds(leg['duration_s'])}"
         if leg.get("distance_m") is not None:
             tooltip += f" · {leg['distance_m']/1000:.1f} km"
-
-        color = "red" if mode == "plane" else "#3388ff"
 
         folium.PolyLine(
             leg["geometry_latlon"],
@@ -550,7 +572,7 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
 
 
 # ----------------------- Add stop / legs -----------------------
-def add_stop_internal(name: str, lat: float, lon: float, overnight: bool, note: str):
+def add_stop_internal(name: str, lat: float, lon: float, overnight: bool, note: str, booking_status: str, leg_status: str):
     ss = st.session_state
     stop_id = f"S{ss['next_stop_id']}"
     ss["next_stop_id"] += 1
@@ -561,6 +583,7 @@ def add_stop_internal(name: str, lat: float, lon: float, overnight: bool, note: 
             "lat": float(lat),
             "lon": float(lon),
             "overnight": bool(overnight),
+            "booking_status": booking_status, 
             "note": (note or "").strip(),
         }
     )
@@ -569,13 +592,13 @@ def add_stop_internal(name: str, lat: float, lon: float, overnight: bool, note: 
     mark_dirty()
 
 
-def set_leg_between(prev_idx: int, mode: str, note: str):
+def set_leg_between(prev_idx: int, mode: str, note: str, status: str = "todo"):
     ss = st.session_state
     a = ss["stops"][prev_idx]
     b = ss["stops"][prev_idx + 1]
     mode = (mode or "").lower()
 
-    leg: Optional[Dict] = {"mode": mode, "note": (note or "").strip()}
+    leg: Optional[Dict] = {"mode": mode, "note": (note or "").strip(), "booking_status": status}
 
     if mode in {"car", "bus", "train"}:
         leg.update(google_driving_route(a["lat"], a["lon"], b["lat"], b["lon"]))
@@ -693,16 +716,34 @@ def search_api_labels(query: str) -> List[str]:
 # ----------------------- UI helpers -----------------------
 def stop_row_html(s: Dict) -> str:
     overnight = bool(s.get("overnight", False))
-    bg = "#e8f0ff" if overnight else "#ffffff"
-    border = "#9bb7ff" if overnight else "#e5e7eb"
-    badge = "🌙 Pernottamento" if overnight else ""
+    status = s.get("booking_status", "todo")
+    
+    if not overnight:
+        bg = "#ffffff"
+        border = "#e5e7eb"
+        badge = ""
+    else:
+        # Define Badge & Colors based on Status
+        if status == "booked":
+            bg = "#dcfce7" # Light green
+            border = "#86efac"
+            badge = "✅ Prenotato"
+        elif status == "provisional":
+            bg = "#ffedd5" # Light orange
+            border = "#fdba74"
+            badge = "⚠️ Provvisorio"
+        else: # todo
+            bg = "#fee2e2" # Light red
+            border = "#fca5a5"
+            badge = "🛑 Da prenotare"
+
     note = (s.get("note") or "").strip()
     note_html = f"<div style='margin-top:6px;color:#444;font-size:0.92rem;'><em>{note}</em></div>" if note else ""
     return f"""
     <div style="background:{bg};border:1px solid {border};border-radius:12px;padding:12px 14px;margin:8px 0;">
       <div style="display:flex;gap:10px;align-items:baseline;justify-content:space-between;">
         <div style="font-size:1.02rem;"><strong>{s['name']}</strong></div>
-        <div style="font-size:0.92rem;color:#333;">{badge}</div>
+        <div style="font-size:0.85rem;color:#333;font-weight:bold;">{badge}</div>
       </div>
       {note_html}
     </div>
@@ -1116,13 +1157,25 @@ if ss.get("can_edit"):
                 with c_mode:
                     mode = "Auto"
                     leg_note = ""
+                    leg_status = "todo"
+                    
                     if is_first:
                         st.info("Punto di partenza (Nessuno spostamento)")
                     elif is_same_place:
                         st.info("Stesso luogo (Nessuno spostamento)")
                     else:
                         st.caption(f"Spostamento da {ss['stops'][-1]['name']}")
-                        mode = st.selectbox("Mezzo", ["Auto", "Treno", "Aereo", "Bus", "Altro"], index=0)
+                        # We use cols for mode and status
+                        m_col, s_col = st.columns([1, 1])
+                        with m_col:
+                            mode = st.selectbox("Mezzo", ["Auto", "Treno", "Aereo", "Bus", "Altro"], index=0)
+                        with s_col:
+                            leg_status = st.selectbox(
+                                "Stato Spostamento", 
+                                ["todo", "provisional", "booked"], 
+                                format_func=lambda x: {"todo": "Da fare", "provisional": "Provvisorio", "booked": "Prenotato"}.get(x, x),
+                                index=0
+                            )
 
                 c_note_l, c_note_r = st.columns(2)
                 with c_note_l:
@@ -1131,12 +1184,27 @@ if ss.get("can_edit"):
                     if not is_first and not is_same_place:
                         leg_note = st.text_input("Note spostamento", value="")
 
-                overnight = st.checkbox("Pernottamento", value=True)
+                # Booking status for Stop
+                c_ov_cb, c_ov_st = st.columns([1, 2])
+                with c_ov_cb:
+                    st.write("")
+                    st.write("")
+                    overnight = st.checkbox("Pernottamento", value=True)
+                with c_ov_st:
+                    if overnight:
+                        booking_status = st.selectbox(
+                            "Stato Hotel", 
+                            ["todo", "provisional", "booked"], 
+                            format_func=lambda x: {"todo": "Da prenotare", "provisional": "Provvisorio", "booked": "Prenotato"}.get(x, x),
+                            index=0
+                        )
+                    else:
+                        booking_status = "todo"
 
                 st.write("") 
                 if st.form_submit_button("Aggiungi Tappa", type="primary", use_container_width=True):
                     final_name = p["name"] # Explicitly use Search Name
-                    add_stop_internal(final_name, p["lat"], p["lon"], overnight, stop_note)
+                    add_stop_internal(final_name, p["lat"], p["lon"], overnight, stop_note, booking_status, leg_status)
                     
                     if not is_first:
                         prev_idx = len(ss["stops"]) - 2
@@ -1146,7 +1214,7 @@ if ss.get("can_edit"):
                         else:
                             m_map = {"Auto": "car", "Treno": "train", "Aereo": "plane", "Bus": "bus", "Altro": "car"}
                             internal_mode = m_map.get(mode, "car")
-                            set_leg_between(prev_idx, internal_mode, leg_note)
+                            set_leg_between(prev_idx, internal_mode, leg_note, leg_status)
                     
                     ss["pending_preview"] = None
                     ss["last_selected_label"] = None
@@ -1209,11 +1277,11 @@ else:
                             note_txt = leg['note'].strip() if leg.get("note") else ""
                             note_md = f" — *{note_txt}*" if note_txt else ""
                             
-                            st.caption(f"🔻 **{summ}**{note_md}")                
+                            st.caption(f"🔻 **{summ}**{note_md}")
+                
                 if ss.get("can_edit"):
                     st.button("✏️ Modifica Giorno", key=f"btn_edit_{b_idx}", on_click=lambda idx=b_idx: ss.update({"editing_day_idx": idx}))
             
-            # EDIT MODE
             # EDIT MODE
             else:
                 st.markdown(f"#### ✏️ Modifica Giorno {b['day']}")
@@ -1226,8 +1294,9 @@ else:
                     
                     cur_m = inc_leg.get("mode", "—") if inc_leg else "—"
                     cur_n = inc_leg.get("note", "") if inc_leg else ""
+                    cur_s = inc_leg.get("booking_status", "todo") if inc_leg else "todo"
                     
-                    c1, c2 = st.columns([1, 3])
+                    c1, c2, c3 = st.columns([1, 1, 3])
                     with c1:
                         def fmt_m(m): return {"car":"Auto","bus":"Bus","train":"Treno","plane":"Aereo","ferry":"Traghetto","—":"—"}.get(m, m)
                         modes = ["—", "car", "bus", "train", "plane", "ferry"]
@@ -1237,6 +1306,7 @@ else:
                             # FIX: Use .get() to prevent KeyError on Enter
                             n_m = st.session_state.get(f"inc_mode_{b_idx}")
                             n_n = st.session_state.get(f"inc_note_{b_idx}")
+                            n_s = st.session_state.get(f"inc_stat_{b_idx}")
                             
                             # Safety check: if keys are missing during reload, skip update
                             if n_m is None: return
@@ -1254,15 +1324,18 @@ else:
                                     else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                 except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
-                                if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None})
-                                else: rt.update({"mode": n_m, "note": n_n})
+                                if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "booking_status": n_s, "distance_m": None, "duration_s": None})
+                                else: rt.update({"mode": n_m, "note": n_n, "booking_status": n_s})
                                 ss["legs_between"][idx] = rt
                             elif ss["legs_between"][idx]:
                                 ss["legs_between"][idx]["note"] = n_n
+                                ss["legs_between"][idx]["booking_status"] = n_s
                             mark_dirty()
 
                         st.selectbox("Mezzo", modes, index=idx_m, format_func=fmt_m, key=f"inc_mode_{b_idx}", on_change=update_inc_leg)
                     with c2:
+                         st.selectbox("Stato", ["todo", "provisional", "booked"], index=["todo", "provisional", "booked"].index(cur_s), format_func=lambda x: {"todo": "Da fare", "provisional": "Provvisorio", "booked": "Prenotato"}.get(x, x), key=f"inc_stat_{b_idx}", on_change=update_inc_leg)
+                    with c3:
                         st.text_input("Note Arrivo", value=cur_n, key=f"inc_note_{b_idx}", on_change=update_inc_leg)
                     st.divider()
 
@@ -1335,15 +1408,24 @@ else:
                             ss["stops"][idx]["note"] = st.session_state[f"d_note_{k}"]
                         if f"d_ov_{k}" in st.session_state:
                             ss["stops"][idx]["overnight"] = st.session_state[f"d_ov_{k}"]
+                        if f"d_stat_{k}" in st.session_state:
+                            ss["stops"][idx]["booking_status"] = st.session_state[f"d_stat_{k}"]
                         mark_dirty()
 
-                    c_nm, c_nt, c_ov = st.columns([2, 3, 1])
+                    c_nm, c_nt = st.columns([2, 3])
                     with c_nm:
                         st.text_input("Nome", value=s['name'], key=f"d_name_{k_sfx}", on_change=update_stop)
                     with c_nt:
                         st.text_input("Note", value=s.get("note", ""), key=f"d_note_{k_sfx}", on_change=update_stop)
-                    with c_ov:
+                        
+                    c_ov_cb, c_ov_st = st.columns([1, 2])
+                    with c_ov_cb:
+                        st.write("") # Spacer
                         st.checkbox("Pernottamento", value=s.get("overnight", False), key=f"d_ov_{k_sfx}", on_change=update_stop)
+                    with c_ov_st:
+                        cur_status = s.get("booking_status", "todo")
+                        st.selectbox("Stato Hotel", ["todo", "provisional", "booked"], index=["todo", "provisional", "booked"].index(cur_status), format_func=lambda x: {"todo": "Da prenotare", "provisional": "Provvisorio", "booked": "Prenotato"}.get(x, x), key=f"d_stat_{k_sfx}", on_change=update_stop)
+
 
                     # --- OUTGOING LEG ---
                     if i < len(ss["stops"]) - 1:
@@ -1352,13 +1434,16 @@ else:
                         
                         l_m = leg.get("mode", "—") if leg else "—"
                         l_n = leg.get("note", "") if leg else ""
+                        l_s = leg.get("booking_status", "todo") if leg else "todo"
                         
                         # FIX: Explicitly define the list here to avoid conflict with the 'modes' set used in the header
                         modes_list = ["—", "car", "bus", "train", "plane", "ferry"]
                         
                         def update_leg(idx=i, k=k_sfx):
+                            # FIX: Use .get() to prevent KeyError on Enter
                             n_m = st.session_state.get(f"d_mode_{k}")
                             n_n = st.session_state.get(f"d_lnote_{k}")
+                            n_s = st.session_state.get(f"d_lstat_{k}")
 
                             if n_m is None: return
 
@@ -1369,31 +1454,27 @@ else:
                             elif (n_m != "—") and (not old or old.get("mode") != n_m):
                                 A, B = ss["stops"][idx], ss["stops"][idx+1]
                                 try:
-                                    # Always try Google first if available
                                     if "google_driving_route" in globals():
                                         rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                         rt["source"] = "google"
-                                    else: 
-                                        # Fallback (though we removed OSRM, good to be safe)
-                                        rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
-                                except: 
-                                    rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                    else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                                except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
                                 
-                                if n_m == "plane": 
-                                    rt.update({"mode": "plane", "note": n_n, "distance_m": None, "duration_s": None})
-                                else: 
-                                    rt.update({"mode": n_m, "note": n_n})
+                                if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "booking_status": n_s, "distance_m": None, "duration_s": None})
+                                else: rt.update({"mode": n_m, "note": n_n, "booking_status": n_s})
                                 ss["legs_between"][idx] = rt
                             elif ss["legs_between"][idx]:
                                 ss["legs_between"][idx]["note"] = n_n
+                                ss["legs_between"][idx]["booking_status"] = n_s
                             mark_dirty()
 
-                        lc1, lc2 = st.columns([1, 4])
+                        lc1, lc2, lc3 = st.columns([1, 1, 3])
                         with lc1:
-                            # Use modes_list here
                             idx_l = modes_list.index(l_m) if l_m in modes_list else 0
                             st.selectbox("Mezzo", modes_list, index=idx_l, format_func=lambda x: {"car":"Auto","bus":"Bus","train":"Treno","plane":"Aereo","ferry":"Traghetto","—":"—"}.get(x, x), key=f"d_mode_{k_sfx}", label_visibility="collapsed", on_change=update_leg)
                         with lc2:
+                            st.selectbox("Stato Leg", ["todo", "provisional", "booked"], index=["todo", "provisional", "booked"].index(l_s), format_func=lambda x: {"todo": "Da fare", "provisional": "Provvisorio", "booked": "Prenotato"}.get(x, x), key=f"d_lstat_{k_sfx}", label_visibility="collapsed", on_change=update_leg)
+                        with lc3:
                             st.text_input("Note Leg", value=l_n, key=f"d_lnote_{k_sfx}", label_visibility="collapsed", on_change=update_leg)
                         st.divider()
 
