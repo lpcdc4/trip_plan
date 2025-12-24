@@ -395,6 +395,7 @@ def driving_seconds_for_leg(leg: Optional[Dict]) -> int:
     if not leg:
         return 0
     mode = (leg.get("mode") or "").lower()
+    # CHANGE: Only count 'car'/'auto'. Train/Bus/Plane = 0 driving time.
     if mode in {"car", "auto"} and leg.get("duration_s") is not None:
         try:
             return int(round(float(leg["duration_s"])))
@@ -412,13 +413,13 @@ def leg_summary(leg: Optional[Dict]) -> str:
     }
     display_mode = mode_map.get(mode_raw, mode_raw.title())
     
-    # Check status
     status = leg.get("booking_status", "todo")
     status_icon = ""
     if status == "booked": status_icon = " ✅"
     elif status == "provisional": status_icon = " ⚠️"
     
-    if mode_raw in {"car", "bus", "train", "auto"} and leg.get("distance_m") is not None and leg.get("duration_s") is not None:
+    # CHANGE: Only show distance/time for CAR. Train/Bus behave like Plane.
+    if mode_raw in {"car", "auto"} and leg.get("distance_m") is not None and leg.get("duration_s") is not None:
         km = leg["distance_m"] / 1000.0
         hhmm = hhmm_from_seconds(leg["duration_s"])
         return f"{display_mode}{status_icon} · {km:.1f} km · {hhmm}"
@@ -527,23 +528,23 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
             continue
 
         mode = (leg.get("mode") or "").lower()
-        dash = "1,0"
+        
+        # --- FIXED DASH PATTERNS ---
+        # Car = Solid (default 1,0 is tricky, None is better for solid)
+        dash = None 
         if mode == "bus":
-            dash = "6,6"
+            dash = "3, 8"   # Short dots
         elif mode == "train":
-            dash = "2,8"
+            dash = "10, 10" # Medium dash
         elif mode == "plane":
-            dash = "8,10"
+            dash = "20, 20" # Long dash
 
         booking_status = leg.get("booking_status", "todo")
-        # Color logic: Green (Booked) > Orange (Provisional) > Blue (Todo)
-        # Note: We prioritize status color over mode color.
         if booking_status == "booked":
             color = "green"
         elif booking_status == "provisional":
             color = "orange"
         else:
-            # Default
             color = "#3388ff"
 
         mode_map = {
@@ -600,20 +601,16 @@ def set_leg_between(prev_idx: int, mode: str, note: str, status: str = "todo"):
 
     leg: Optional[Dict] = {"mode": mode, "note": (note or "").strip(), "booking_status": status}
 
-    if mode in {"car", "bus", "train"}:
+    # CHANGE: Only call Google Driving Route for CAR/AUTO
+    if mode in {"car", "auto"}:
         leg.update(google_driving_route(a["lat"], a["lon"], b["lat"], b["lon"]))
-    elif mode == "plane":
-        leg.update(
-            {
-                "distance_m": None,
-                "duration_s": None,
-                "geometry_latlon": interpolate_line(a["lat"], a["lon"], b["lat"], b["lon"]),
-            }
-        )
-    elif mode == "—":
-        leg = None
     else:
-        leg = None
+        # Train, Bus, Plane, Ferry, etc. -> Straight line, no duration
+        leg.update({
+            "distance_m": None,
+            "duration_s": None,
+            "geometry_latlon": interpolate_line(a["lat"], a["lon"], b["lat"], b["lon"]),
+        })
 
     ss["legs_between"][prev_idx] = leg
     mark_dirty()
@@ -655,7 +652,7 @@ def apply_stop_reorder(new_order_ids: List[str]):
             new_legs.append(kept)
             continue
 
-        # Force Google Routing on Reorder
+        # Force Google Routing on Reorder (Default to CAR for recalculation)
         A = new_stops[i]
         B = new_stops[i + 1]
         try:
@@ -974,10 +971,19 @@ with st.sidebar:
                     A = stops[i]
                     B = stops[i+1]
                     try:
-                        new_data = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                        new_data["source"] = "google"
-                        leg.update(new_data)
-                        updated_count += 1
+                        # CHANGE: Only Google if car/auto
+                        if leg.get("mode") in {"car", "auto"}:
+                            new_data = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
+                            new_data["source"] = "google"
+                            leg.update(new_data)
+                            updated_count += 1
+                        else:
+                            # If it was train/bus, strip the driving data
+                            leg.update({
+                                "distance_m": None, 
+                                "duration_s": None,
+                                "geometry_latlon": interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                            })
                     except Exception as e:
                         st.warning(f"Errore tratta {i+1}: {e}")
                 progress_bar.progress((i + 1) / total)
@@ -1250,10 +1256,12 @@ else:
         modes = set()
         for li, leg in b["legs"]:
             if leg: modes.add(leg.get("mode", "car").lower())
-        if b["start"] > 0:
-            inc_leg = ss["legs_between"][b["start"]-1]
-            if inc_leg: modes.add(inc_leg.get("mode", "car").lower())
-
+        
+        # --- FIX: REMOVE PREVIOUS DAY'S LEG FROM HEADER SUMMARY ---
+        # Only internal legs count for the day's "Type"
+        # The incoming leg (e.g., arrival flight) is shown in the Edit UI but
+        # usually doesn't count as "This day's travel" for the header summary.
+        
         if "plane" in modes: time_parts.append("Volo")
         if "train" in modes: time_parts.append("Treno")
         
@@ -1317,15 +1325,21 @@ else:
                                 ss["legs_between"][idx] = None
                             elif (n_m != "—") and (not old or old.get("mode") != n_m):
                                 A, B = ss["stops"][idx], ss["stops"][idx+1]
-                                try:
-                                    if "google_driving_route" in globals():
+                                # CHANGE: Only call Google if car/auto
+                                if n_m in {"car", "auto"}:
+                                    try:
                                         rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                         rt["source"] = "google"
-                                    else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                    except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                else:
+                                    # Plane/Train/Bus = Straight Line, no duration
+                                    rt = {
+                                        "distance_m": None, 
+                                        "duration_s": None, 
+                                        "geometry_latlon": interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                    }
                                 
-                                if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "booking_status": n_s, "distance_m": None, "duration_s": None})
-                                else: rt.update({"mode": n_m, "note": n_n, "booking_status": n_s})
+                                rt.update({"mode": n_m, "note": n_n, "booking_status": n_s})
                                 ss["legs_between"][idx] = rt
                             elif ss["legs_between"][idx]:
                                 ss["legs_between"][idx]["note"] = n_n
@@ -1369,14 +1383,18 @@ else:
                                     leg = ss["legs_between"][l_idx]
                                     if leg:
                                         A, B = ss["stops"][l_idx], ss["stops"][i]
-                                        if leg.get("mode") in {"car", "bus", "train"}:
+                                        # CHANGE: Only Google if car/auto
+                                        if leg.get("mode") in {"car", "auto"}:
                                             try:
                                                 rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                                 rt["source"] = "google"
                                                 leg.update(rt)
                                             except: pass
                                         else:
-                                            leg["geometry_latlon"] = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            leg.update({
+                                                "distance_m": None, "duration_s": None,
+                                                "geometry_latlon": interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            })
                                 
                                 # Recalc Outgoing
                                 if i < len(ss["stops"]) - 1:
@@ -1384,14 +1402,18 @@ else:
                                     leg = ss["legs_between"][l_idx]
                                     if leg:
                                         A, B = ss["stops"][i], ss["stops"][i+1]
-                                        if leg.get("mode") in {"car", "bus", "train"}:
+                                        # CHANGE: Only Google if car/auto
+                                        if leg.get("mode") in {"car", "auto"}:
                                             try:
                                                 rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                                 rt["source"] = "google"
                                                 leg.update(rt)
                                             except: pass
                                         else:
-                                            leg["geometry_latlon"] = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            leg.update({
+                                                "distance_m": None, "duration_s": None,
+                                                "geometry_latlon": interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                            })
                                 
                                 # Close edit panel automatically
                                 ss["editing_day_idx"] = None
@@ -1453,15 +1475,23 @@ else:
                                 ss["legs_between"][idx] = None
                             elif (n_m != "—") and (not old or old.get("mode") != n_m):
                                 A, B = ss["stops"][idx], ss["stops"][idx+1]
-                                try:
-                                    if "google_driving_route" in globals():
+                                
+                                # CHANGE: Only call Google if car/auto
+                                if n_m in {"car", "auto"}:
+                                    try:
                                         rt = google_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
                                         rt["source"] = "google"
-                                    else: rt = osrm_driving_route(A["lat"], A["lon"], B["lat"], B["lon"])
-                                except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
-                                
-                                if n_m == "plane": rt.update({"mode": "plane", "note": n_n, "booking_status": n_s, "distance_m": None, "duration_s": None})
-                                else: rt.update({"mode": n_m, "note": n_n, "booking_status": n_s})
+                                    except: rt = interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"])
+                                    # Car gets full stats
+                                    rt.update({"mode": n_m, "note": n_n, "booking_status": n_s})
+                                else:
+                                    # Train/Bus/Plane = Straight line, No stats
+                                    rt = {
+                                        "distance_m": None, "duration_s": None,
+                                        "geometry_latlon": interpolate_line(A["lat"], A["lon"], B["lat"], B["lon"]),
+                                        "mode": n_m, "note": n_n, "booking_status": n_s
+                                    }
+                                    
                                 ss["legs_between"][idx] = rt
                             elif ss["legs_between"][idx]:
                                 ss["legs_between"][idx]["note"] = n_n
