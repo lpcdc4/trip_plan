@@ -481,7 +481,6 @@ def itinerary_day_blocks(stops: List[Dict], legs_between: List[Optional[Dict]]) 
 
 
 # ----------------------- Map -----------------------
-# ----------------------- Map -----------------------
 def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.Map:
     ss = st.session_state
     center = ss["map_center"] or compute_center(stops) or (20.0, 0.0)
@@ -497,26 +496,92 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
             icon=folium.Icon(color="green", icon="search"),
         ).add_to(m)
 
-    # 1. DRAW STOPS
-    # We track the "current arrival day" as we iterate
+    # 1. PRE-PROCESS STOPS INTO UNIQUE MARKERS
+    unique_markers = []
     current_day = 1
     
-    for s in stops:
+    # Track how many times we've placed a pin at a specific coordinate
+    # key: (lat, lon), value: count
+    location_counts = {}
+
+    for i, s in enumerate(stops):
         is_overnight = s.get("overnight")
-        status = s.get("booking_status", "todo")
+        arr_date = day_to_date(current_day)
+        dep_day = current_day + 1 if is_overnight else current_day
+        dep_date = day_to_date(dep_day)
         
-        # Calculate Dates
-        date_arr = day_to_date(current_day)
-        date_str_arr = fmt_date(date_arr)
-        
+        # --- MERGE LOGIC (Consecutive only) ---
+        is_consecutive_duplicate = False
+        if unique_markers:
+            last_m = unique_markers[-1]
+            # Check if this stop is at the exact same location as the IMMEDIATE previous one
+            if abs(last_m["base_lat"] - s["lat"]) < 0.0001 and abs(last_m["base_lon"] - s["lon"]) < 0.0001:
+                is_consecutive_duplicate = True
+                
+                # Merge into the existing marker
+                last_m["out_day"] = dep_day
+                last_m["out_date"] = dep_date
+                
+                new_note = (s.get("note") or "").strip()
+                if new_note:
+                    if last_m["combined_notes"]:
+                        last_m["combined_notes"] += f"; {new_note}"
+                    else:
+                        last_m["combined_notes"] = new_note
+                
+                # Update Status Priority
+                status_priority = {"todo": 3, "provisional": 2, "booked": 1}
+                current_p = status_priority.get(last_m["status"], 0)
+                new_p = status_priority.get(s.get("booking_status", "todo"), 0)
+                if new_p > current_p:
+                    last_m["status"] = s.get("booking_status", "todo")
+                
+                if is_overnight:
+                    last_m["is_overnight"] = True
+
+        if not is_consecutive_duplicate:
+            # --- JITTER LOGIC (Non-consecutive duplicates) ---
+            # If we are coming back to a place we visited days ago, shift the pin slightly
+            # so it doesn't cover the old one.
+            
+            # Rounding to 4 decimals groups nearby points effectively for the key
+            loc_key = (round(s["lat"], 4), round(s["lon"], 4))
+            occurrence = location_counts.get(loc_key, 0)
+            
+            # Apply offset: 0.0002 degrees is roughly 20 meters
+            # We shift slightly North-East for every re-visit
+            offset_lat = s["lat"] + (0.0002 * occurrence)
+            offset_lon = s["lon"] + (0.0002 * occurrence)
+            
+            location_counts[loc_key] = occurrence + 1
+
+            unique_markers.append({
+                "base_lat": s["lat"], # Keep original for merge detection
+                "base_lon": s["lon"],
+                "lat": offset_lat,    # Use offset for drawing
+                "lon": offset_lon,
+                "name": s["name"],
+                "in_day": current_day,
+                "in_date": arr_date,
+                "out_day": dep_day,
+                "out_date": dep_date,
+                "is_overnight": is_overnight,
+                "status": s.get("booking_status", "todo"),
+                "combined_notes": (s.get("note") or "").strip()
+            })
+
         if is_overnight:
-            # It's an overnight stay: Arrive Day X, Depart Day X+1
-            date_dep = day_to_date(current_day + 1)
-            date_str_dep = fmt_date(date_dep)
+            current_day += 1
+
+    # 2. DRAW MARKERS
+    for um in unique_markers:
+        date_str_arr = fmt_date(um["in_date"])
+        date_str_dep = fmt_date(um["out_date"])
+        
+        if um["is_overnight"]:
+            tooltip_txt = f"{um['name']} · In: Giorno {um['in_day']} ({date_str_arr}) / Out: Giorno {um['out_day']} ({date_str_dep})"
             
-            tooltip_txt = f"{s['name']} · In: Giorno {current_day} ({date_str_arr}) / Out: Giorno {current_day+1} ({date_str_dep})"
-            
-            # Color Logic
+            status = um["status"]
             if status == "booked":
                 icon_color = "green"
                 od_str = "Sì (Prenotato)"
@@ -527,39 +592,26 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
                 icon_color = "red"
                 od_str = "Sì (Da prenotare)"
             icon = folium.Icon(color=icon_color, icon="bed", prefix="fa")
-            
-            # Increment day counter for the *next* stop/leg
-            current_day += 1
         else:
-            # Just a visit: Day X
-            tooltip_txt = f"{s['name']} · Giorno {current_day} ({date_str_arr})"
-            
+            tooltip_txt = f"{um['name']} · Giorno {um['in_day']} ({date_str_arr})"
             icon = folium.Icon(color="gray", icon="map-pin", prefix="fa")
             od_str = "No"
-            # Day counter does NOT increment
         
-        popup = f"<b>{s['name']}</b><br>Notte: {od_str}<br>{tooltip_txt}"
-        if s.get("note"):
-            popup += f"<br>Note: {s['note']}"
+        popup = f"<b>{um['name']}</b><br>Notte: {od_str}<br>{tooltip_txt}"
+        if um["combined_notes"]:
+            popup += f"<br>Note: {um['combined_notes']}"
             
-        folium.Marker([s["lat"], s["lon"]], popup=popup, tooltip=tooltip_txt, icon=icon).add_to(m)
+        folium.Marker([um["lat"], um["lon"]], popup=popup, tooltip=tooltip_txt, icon=icon).add_to(m)
         
-    # 2. DRAW LEGS
-    # Reset counter to calculate leg days correctly
+    # 3. DRAW LEGS
     current_day = 1
-    
     for i in range(len(stops) - 1):
         leg = legs_between[i] if i < len(legs_between) else None
-        
-        # Check the stop *before* this leg to decide the day
         s_prev = stops[i]
         is_prev_overnight = s_prev.get("overnight")
-        
-        # If previous stop was overnight, we leave on the NEXT day
         leg_day = current_day + 1 if is_prev_overnight else current_day
         leg_date_str = fmt_date(day_to_date(leg_day))
         
-        # Advance the counter for the loop logic
         if is_prev_overnight:
             current_day += 1
 
@@ -567,34 +619,18 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
             continue
 
         mode = (leg.get("mode") or "").lower()
-        
-        # Dash Patterns
-        dash = None 
-        if mode == "bus":
-            dash = "3, 8"
-        elif mode == "train":
-            dash = "10, 10"
-        elif mode == "plane":
-            dash = "20, 20"
-
-        # Colors
         booking_status = leg.get("booking_status", "todo")
-        if booking_status == "booked":
-            color = "green"
-        elif booking_status == "provisional":
-            color = "orange"
-        else:
-            color = "#3388ff"
+        color = "green" if booking_status == "booked" else "orange" if booking_status == "provisional" else "#3388ff"
+        
+        dash = None
+        if mode == "bus": dash = "3, 8"
+        elif mode == "train": dash = "10, 10"
+        elif mode == "plane": dash = "20, 20"
 
-        mode_map = {
-            "car": "Auto", "bus": "Bus", "train": "Treno", 
-            "plane": "Aereo", "ferry": "Traghetto"
-        }
+        mode_map = {"car": "Auto", "bus": "Bus", "train": "Treno", "plane": "Aereo", "ferry": "Traghetto"}
         display_mode = mode_map.get(mode, mode.title())
 
-        # Tooltip with Day info
         tooltip = f"Giorno {leg_day} ({leg_date_str}) · {display_mode} · {stops[i]['name']} → {stops[i+1]['name']}"
-        
         if leg.get("duration_s") is not None:
             tooltip += f" · {hhmm_from_seconds(leg['duration_s'])}"
         if leg.get("distance_m") is not None:
