@@ -481,6 +481,7 @@ def itinerary_day_blocks(stops: List[Dict], legs_between: List[Optional[Dict]]) 
 
 
 # ----------------------- Map -----------------------
+# ----------------------- Map -----------------------
 def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.Map:
     ss = st.session_state
     center = ss["map_center"] or compute_center(stops) or (20.0, 0.0)
@@ -496,11 +497,26 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
             icon=folium.Icon(color="green", icon="search"),
         ).add_to(m)
 
+    # 1. DRAW STOPS
+    # We track the "current arrival day" as we iterate
+    current_day = 1
+    
     for s in stops:
         is_overnight = s.get("overnight")
         status = s.get("booking_status", "todo")
         
+        # Calculate Dates
+        date_arr = day_to_date(current_day)
+        date_str_arr = fmt_date(date_arr)
+        
         if is_overnight:
+            # It's an overnight stay: Arrive Day X, Depart Day X+1
+            date_dep = day_to_date(current_day + 1)
+            date_str_dep = fmt_date(date_dep)
+            
+            tooltip_txt = f"{s['name']} · In: Giorno {current_day} ({date_str_arr}) / Out: Giorno {current_day+1} ({date_str_dep})"
+            
+            # Color Logic
             if status == "booked":
                 icon_color = "green"
                 od_str = "Sì (Prenotato)"
@@ -510,35 +526,58 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
             else:
                 icon_color = "red"
                 od_str = "Sì (Da prenotare)"
-            
             icon = folium.Icon(color=icon_color, icon="bed", prefix="fa")
+            
+            # Increment day counter for the *next* stop/leg
+            current_day += 1
         else:
+            # Just a visit: Day X
+            tooltip_txt = f"{s['name']} · Giorno {current_day} ({date_str_arr})"
+            
             icon = folium.Icon(color="gray", icon="map-pin", prefix="fa")
             od_str = "No"
+            # Day counter does NOT increment
         
-        popup = f"<b>{s['name']}</b><br>Notte: {od_str}"
+        popup = f"<b>{s['name']}</b><br>Notte: {od_str}<br>{tooltip_txt}"
         if s.get("note"):
             popup += f"<br>Note: {s['note']}"
             
-        folium.Marker([s["lat"], s["lon"]], popup=popup, tooltip=s["name"], icon=icon).add_to(m)
+        folium.Marker([s["lat"], s["lon"]], popup=popup, tooltip=tooltip_txt, icon=icon).add_to(m)
         
+    # 2. DRAW LEGS
+    # Reset counter to calculate leg days correctly
+    current_day = 1
+    
     for i in range(len(stops) - 1):
         leg = legs_between[i] if i < len(legs_between) else None
+        
+        # Check the stop *before* this leg to decide the day
+        s_prev = stops[i]
+        is_prev_overnight = s_prev.get("overnight")
+        
+        # If previous stop was overnight, we leave on the NEXT day
+        leg_day = current_day + 1 if is_prev_overnight else current_day
+        leg_date_str = fmt_date(day_to_date(leg_day))
+        
+        # Advance the counter for the loop logic
+        if is_prev_overnight:
+            current_day += 1
+
         if not leg or not leg.get("geometry_latlon"):
             continue
 
         mode = (leg.get("mode") or "").lower()
         
-        # --- FIXED DASH PATTERNS ---
-        # Car = Solid (default 1,0 is tricky, None is better for solid)
+        # Dash Patterns
         dash = None 
         if mode == "bus":
-            dash = "3, 8"   # Short dots
+            dash = "3, 8"
         elif mode == "train":
-            dash = "10, 10" # Medium dash
+            dash = "10, 10"
         elif mode == "plane":
-            dash = "20, 20" # Long dash
+            dash = "20, 20"
 
+        # Colors
         booking_status = leg.get("booking_status", "todo")
         if booking_status == "booked":
             color = "green"
@@ -553,7 +592,8 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         }
         display_mode = mode_map.get(mode, mode.title())
 
-        tooltip = f"{display_mode} · {stops[i]['name']} → {stops[i+1]['name']}"
+        # Tooltip with Day info
+        tooltip = f"Giorno {leg_day} ({leg_date_str}) · {display_mode} · {stops[i]['name']} → {stops[i+1]['name']}"
         
         if leg.get("duration_s") is not None:
             tooltip += f" · {hhmm_from_seconds(leg['duration_s'])}"
