@@ -482,8 +482,6 @@ def itinerary_day_blocks(stops: List[Dict], legs_between: List[Optional[Dict]]) 
 
 from folium.features import DivIcon
 
-from folium.features import DivIcon
-
 def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.Map:
     ss = st.session_state
     center = ss["map_center"] or compute_center(stops) or (20.0, 0.0)
@@ -500,10 +498,18 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         ).add_to(m)
 
     # -----------------------------------------------------------
-    # 1. GROUPING LOGIC
+    # 1. GROUPING LOGIC (Snap-to-Proximity)
     # -----------------------------------------------------------
     grouped_markers = {}
     current_day = 1
+
+    def find_close_group(lat, lon):
+        threshold = 0.0005  # Approx 50 meters
+        for key in grouped_markers:
+            g_lat, g_lon = key
+            if abs(lat - g_lat) < threshold and abs(lon - g_lon) < threshold:
+                return key
+        return None
 
     for i, s in enumerate(stops):
         is_overnight = s.get("overnight")
@@ -511,9 +517,13 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         dep_day = current_day + 1 if is_overnight else current_day
         dep_date = day_to_date(dep_day)
         
-        k = (round(s["lat"], 4), round(s["lon"], 4))
-        
-        # Priority: todo=0, provisional=1, booked=2
+        # Snap to existing group if close
+        existing_key = find_close_group(s["lat"], s["lon"])
+        if existing_key:
+            k = existing_key
+        else:
+            k = (s["lat"], s["lon"])
+
         status_priority = {"todo": 0, "provisional": 1, "booked": 2}
         this_status_val = status_priority.get(s.get("booking_status", "todo"), 0)
         
@@ -529,8 +539,8 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
 
         if k not in grouped_markers:
             grouped_markers[k] = {
-                "lat": s["lat"],
-                "lon": s["lon"],
+                "lat": k[0],
+                "lon": k[1],
                 "name": s["name"],
                 "visits": [visit_obj],
                 "last_seen_index": i
@@ -539,19 +549,16 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
             existing = grouped_markers[k]
             last_v = existing["visits"][-1]
             
-            # Consecutive Merge?
+            # Consecutive Merge Check (only if same "type" roughly)
             if existing["last_seen_index"] == i - 1:
                 last_v["out_day"] = dep_day
                 last_v["out_date"] = dep_date
-                # Keep worst status
                 last_v["status_val"] = min(last_v["status_val"], this_status_val)
-                # Append note
                 if s.get("note"):
                     if last_v["note"]: last_v["note"] += f"; {s.get('note').strip()}"
                     else: last_v["note"] = s.get("note").strip()
                 if is_overnight: last_v["is_overnight"] = True
             else:
-                # Non-Consecutive -> New Visit
                 existing["visits"].append(visit_obj)
             
             existing["last_seen_index"] = i
@@ -562,39 +569,59 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
     # -----------------------------------------------------------
     # 2. RENDER MARKERS
     # -----------------------------------------------------------
-    def get_color_name(val):
-        return {2: "green", 1: "orange", 0: "red"}.get(val, "red")
-        
-    def get_color_hex(val):
+    def get_color_hex(v_obj):
+        # FIX: Non-overnight stops are always Gray
+        if not v_obj['is_overnight']: return "#gray" 
+        # Otherwise use status color
+        val = v_obj['status_val']
         return {2: "#22c55e", 1: "#f97316", 0: "#ef4444"}.get(val, "#ef4444")
+    
+    def get_color_name(v_obj):
+        # FIX: Non-overnight stops are always Gray
+        if not v_obj['is_overnight']: return "gray"
+        val = v_obj['status_val']
+        return {2: "green", 1: "orange", 0: "red"}.get(val, "red")
 
     for k, data in grouped_markers.items():
         visits = data["visits"]
         count = len(visits)
         
-        # --- POPUP CONTENT ---
+        # --- TOOLTIP ---
+        day_labels = []
+        for v in visits:
+            if v['is_overnight']:
+                day_labels.append(f"In Giorno {v['in_day']} - Out Giorno {v['out_day']}")
+            else:
+                day_labels.append(f"Giorno {v['in_day']}")
+        
+        day_info_str = " e ".join(day_labels)
+        tooltip = f"{data['name']} · {day_info_str}"
+
+        # --- POPUP ---
         popup_html = f"<b>{data['name']}</b><hr style='margin:4px 0'>"
         stat_map = {0: "Da prenotare", 1: "Provvisorio", 2: "Prenotato"}
 
         for v in visits:
             d_in = fmt_date(v['in_date'])
-            d_out = fmt_date(v['out_date'])
-            label = f"Giorno {v['in_day']} ➝ {v['out_day']}" if v['is_overnight'] else f"Giorno {v['in_day']}"
+            label = day_labels[visits.index(v)]
             
-            c_hex = get_color_hex(v['status_val'])
-            popup_html += f"<div><span style='color:{c_hex};'>●</span> {label} ({d_in})<br><em style='font-size:0.85em;color:#555;'>{stat_map.get(v['status_val'])}</em></div>"
+            # Dot color logic
+            if not v['is_overnight']:
+                c_hex = "gray"
+                status_txt = "Visita"
+            else:
+                c_hex = get_color_hex(v)
+                status_txt = stat_map.get(v['status_val'])
+            
+            popup_html += f"<div><span style='color:{c_hex};'>●</span> {label} ({d_in})<br><em style='font-size:0.85em;color:#555;'>{status_txt}</em></div>"
             if v['note']: popup_html += f"<div style='font-size:0.85em;margin-left:14px;font-style:italic;'>{v['note']}</div>"
             popup_html += "<div style='margin-bottom:6px;'></div>"
 
-        # Tooltip
-        tooltip = f"{data['name']} ({count} visite)" if count > 1 else data['name']
-
         # --- DRAWING ---
         if count == 1:
-            # === SINGLE MARKER (Use Standard Folium) ===
             v = visits[0]
             icon_name = "bed" if v['is_overnight'] else "map-pin"
-            color = get_color_name(v['status_val'])
+            color = get_color_name(v)
             
             folium.Marker(
                 [data["lat"], data["lon"]],
@@ -602,28 +629,25 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
                 tooltip=tooltip,
                 icon=folium.Icon(color=color, icon=icon_name, prefix="fa")
             ).add_to(m)
-            
         else:
-            # === FANNED MARKERS (Custom HTML) ===
-            # We construct HTML that draws the Colored Pin AND overlays the white Bed icon
             icons_html = ""
             limit = min(count, 4)
             overlap = 16
             
             for idx in range(limit):
                 v = visits[idx]
-                c_hex = get_color_hex(v['status_val'])
                 
-                # Determine icon type (Bed or Pin)
-                fa_icon = "bed" if v['is_overnight'] else "map-pin"
-                
-                # Layout logic
+                # Determine Colors specifically for this pin in the fan
+                if not v['is_overnight']:
+                    c_hex = "#777777" # Dark gray for map pins
+                    fa_icon = "map-pin"
+                else:
+                    c_hex = get_color_hex(v)
+                    fa_icon = "bed"
+
                 left_pos = idx * overlap
-                z_index = 100 - idx # First one on top
+                z_index = 100 - idx 
                 
-                # Composite Icon HTML:
-                # 1. Background Pin (fa-map-marker) in correct color
-                # 2. Foreground Icon (fa-bed/map-pin) in white, absolutely centered
                 icons_html += f"""
                 <div style="position: absolute; left: {left_pos}px; top: 0; z-index: {z_index}; filter: drop-shadow(0px 0px 1px white);">
                     <div style="position: relative; width: 32px; height: 42px;">
@@ -633,17 +657,13 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
                 </div>
                 """
             
-            # Badge for +X
             if count > 4:
-                icons_html += f"""
-                <div style="position: absolute; left: {left_pos + 24}px; top: 0; background: #333; color: white; border-radius: 50%; padding: 2px 6px; font-size: 11px; font-weight: bold; z-index: 200;">+{count-4}</div>
-                """
+                icons_html += f"""<div style="position: absolute; left: {left_pos + 24}px; top: 0; background: #333; color: white; border-radius: 50%; padding: 2px 6px; font-size: 11px; font-weight: bold; z-index: 200;">+{count-4}</div>"""
 
             total_width = (limit * overlap) + 32
-            
             div_icon = DivIcon(
                 icon_size=(total_width, 42),
-                icon_anchor=(16, 42), # Anchor at the tip of the FIRST pin
+                icon_anchor=(16, 42), 
                 html=f'<div style="position: relative; width: {total_width}px; height: 42px;">{icons_html}</div>'
             )
             
@@ -654,7 +674,9 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
                 icon=div_icon
             ).add_to(m)
 
+    # -----------------------------------------------------------
     # 3. DRAW LEGS
+    # -----------------------------------------------------------
     current_day = 1
     for i in range(len(stops) - 1):
         leg = legs_between[i] if i < len(legs_between) else None
@@ -678,6 +700,7 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         
         mode_map = {"car": "Auto", "bus": "Bus", "train": "Treno", "plane": "Aereo", "ferry": "Traghetto"}
         tooltip = f"Giorno {leg_day} ({leg_date_str}) · {mode_map.get(mode, mode.title())}"
+        if leg.get("duration_s"): tooltip += f" · {hhmm_from_seconds(leg['duration_s'])}"
         
         folium.PolyLine(
             leg["geometry_latlon"],
