@@ -482,6 +482,8 @@ def itinerary_day_blocks(stops: List[Dict], legs_between: List[Optional[Dict]]) 
 
 from folium.features import DivIcon
 
+from folium.features import DivIcon
+
 def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.Map:
     ss = st.session_state
     center = ss["map_center"] or compute_center(stops) or (20.0, 0.0)
@@ -549,7 +551,7 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
             existing = grouped_markers[k]
             last_v = existing["visits"][-1]
             
-            # Consecutive Merge Check (only if same "type" roughly)
+            # Consecutive Merge Check
             if existing["last_seen_index"] == i - 1:
                 last_v["out_day"] = dep_day
                 last_v["out_date"] = dep_date
@@ -570,29 +572,34 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
     # 2. RENDER MARKERS
     # -----------------------------------------------------------
     def get_color_hex(v_obj):
-        # FIX: Non-overnight stops are always Gray
         if not v_obj['is_overnight']: return "#gray" 
-        # Otherwise use status color
         val = v_obj['status_val']
         return {2: "#22c55e", 1: "#f97316", 0: "#ef4444"}.get(val, "#ef4444")
     
     def get_color_name(v_obj):
-        # FIX: Non-overnight stops are always Gray
         if not v_obj['is_overnight']: return "gray"
         val = v_obj['status_val']
         return {2: "green", 1: "orange", 0: "red"}.get(val, "red")
+
+    def format_short_date(d):
+        return d.strftime("%d/%m")
 
     for k, data in grouped_markers.items():
         visits = data["visits"]
         count = len(visits)
         
-        # --- TOOLTIP ---
+        # --- TOOLTIP LOGIC ---
         day_labels = []
         for v in visits:
+            d_in_str = format_short_date(v['in_date'])
+            d_out_str = format_short_date(v['out_date'])
+            
             if v['is_overnight']:
-                day_labels.append(f"In Giorno {v['in_day']} - Out Giorno {v['out_day']}")
+                # Format: DD/MM (n. N) - DD/MM (n. M)
+                day_labels.append(f"{d_in_str} (n. {v['in_day']}) - {d_out_str} (n. {v['out_day']})")
             else:
-                day_labels.append(f"Giorno {v['in_day']}")
+                # Format: DD/MM (n. N)
+                day_labels.append(f"{d_in_str} (n. {v['in_day']})")
         
         day_info_str = " e ".join(day_labels)
         tooltip = f"{data['name']} · {day_info_str}"
@@ -602,8 +609,7 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         stat_map = {0: "Da prenotare", 1: "Provvisorio", 2: "Prenotato"}
 
         for v in visits:
-            d_in = fmt_date(v['in_date'])
-            label = day_labels[visits.index(v)]
+            label = day_labels[visits.index(v)] # Reuse the formatted string
             
             # Dot color logic
             if not v['is_overnight']:
@@ -613,7 +619,7 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
                 c_hex = get_color_hex(v)
                 status_txt = stat_map.get(v['status_val'])
             
-            popup_html += f"<div><span style='color:{c_hex};'>●</span> {label} ({d_in})<br><em style='font-size:0.85em;color:#555;'>{status_txt}</em></div>"
+            popup_html += f"<div><span style='color:{c_hex};'>●</span> {label}<br><em style='font-size:0.85em;color:#555;'>{status_txt}</em></div>"
             if v['note']: popup_html += f"<div style='font-size:0.85em;margin-left:14px;font-style:italic;'>{v['note']}</div>"
             popup_html += "<div style='margin-bottom:6px;'></div>"
 
@@ -637,9 +643,8 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
             for idx in range(limit):
                 v = visits[idx]
                 
-                # Determine Colors specifically for this pin in the fan
                 if not v['is_overnight']:
-                    c_hex = "#777777" # Dark gray for map pins
+                    c_hex = "#777777" 
                     fa_icon = "map-pin"
                 else:
                     c_hex = get_color_hex(v)
@@ -683,7 +688,7 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         s_prev = stops[i]
         is_prev_overnight = s_prev.get("overnight")
         leg_day = current_day + 1 if is_prev_overnight else current_day
-        leg_date_str = fmt_date(day_to_date(leg_day))
+        leg_date = day_to_date(leg_day)
         
         if is_prev_overnight: current_day += 1
 
@@ -699,7 +704,11 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         elif mode == "plane": dash = "20, 20"
         
         mode_map = {"car": "Auto", "bus": "Bus", "train": "Treno", "plane": "Aereo", "ferry": "Traghetto"}
-        tooltip = f"Giorno {leg_day} ({leg_date_str}) · {mode_map.get(mode, mode.title())}"
+        
+        # FIXED LEG TOOLTIP FORMAT: DD/MM (n. N)
+        d_str = leg_date.strftime("%d/%m")
+        tooltip = f"{d_str} (n. {leg_day}) · {mode_map.get(mode, mode.title())}"
+        
         if leg.get("duration_s"): tooltip += f" · {hhmm_from_seconds(leg['duration_s'])}"
         
         folium.PolyLine(
