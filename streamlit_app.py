@@ -482,6 +482,8 @@ def itinerary_day_blocks(stops: List[Dict], legs_between: List[Optional[Dict]]) 
 
 from folium.features import DivIcon
 
+from folium.features import DivIcon
+
 def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.Map:
     ss = st.session_state
     center = ss["map_center"] or compute_center(stops) or (20.0, 0.0)
@@ -498,7 +500,7 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         ).add_to(m)
 
     # -----------------------------------------------------------
-    # 1. GROUP STOPS (Same Logic as before)
+    # 1. GROUPING LOGIC
     # -----------------------------------------------------------
     grouped_markers = {}
     current_day = 1
@@ -511,132 +513,138 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         
         k = (round(s["lat"], 4), round(s["lon"], 4))
         
-        date_str_arr = fmt_date(arr_date)
-        date_str_dep = fmt_date(dep_date)
-        
-        if is_overnight:
-            visit_text = f"Giorno {current_day} ({date_str_arr}) ➝ {dep_day} ({date_str_dep})"
-        else:
-            visit_text = f"Giorno {current_day} ({date_str_arr})"
-
-        # Status Priority: todo=0, provisional=1, booked=2
+        # Priority: todo=0, provisional=1, booked=2
         status_priority = {"todo": 0, "provisional": 1, "booked": 2}
         this_status_val = status_priority.get(s.get("booking_status", "todo"), 0)
+        
+        visit_obj = {
+            "in_day": current_day,
+            "out_day": dep_day,
+            "in_date": arr_date,
+            "out_date": dep_date,
+            "status_val": this_status_val,
+            "note": s.get("note", "").strip(),
+            "is_overnight": is_overnight
+        }
 
         if k not in grouped_markers:
             grouped_markers[k] = {
                 "lat": s["lat"],
                 "lon": s["lon"],
                 "name": s["name"],
-                "visits": [visit_text],
-                "notes": [s.get("note", "").strip()],
-                "statuses": [this_status_val],
-                "is_overnight": is_overnight,
+                "visits": [visit_obj],
                 "last_seen_index": i
             }
         else:
             existing = grouped_markers[k]
-            # Consecutive Merge Check
-            if existing.get("last_seen_index") == i - 1:
-                parts = existing["visits"][-1].split("➝")
-                start_part = parts[0]
-                existing["visits"][-1] = f"{start_part} ➝ {dep_day} ({date_str_dep})"
-                existing["last_seen_index"] = i
-                # For consecutive nights, we usually want to KEEP the 'worst' status or just append.
-                # Here, we append the status so we can visualize the "split" (e.g. Night 1 Booked, Night 2 Todo)
-                existing["statuses"].append(this_status_val)
-            else:
-                # Return visit
-                existing["visits"].append(visit_text)
-                existing["statuses"].append(this_status_val)
-                existing["last_seen_index"] = i
+            last_v = existing["visits"][-1]
             
-            if s.get("note"):
-                existing["notes"].append(s.get("note").strip())
-            if is_overnight: existing["is_overnight"] = True
+            # Consecutive Merge?
+            if existing["last_seen_index"] == i - 1:
+                last_v["out_day"] = dep_day
+                last_v["out_date"] = dep_date
+                # Keep worst status
+                last_v["status_val"] = min(last_v["status_val"], this_status_val)
+                # Append note
+                if s.get("note"):
+                    if last_v["note"]: last_v["note"] += f"; {s.get('note').strip()}"
+                    else: last_v["note"] = s.get("note").strip()
+                if is_overnight: last_v["is_overnight"] = True
+            else:
+                # Non-Consecutive -> New Visit
+                existing["visits"].append(visit_obj)
+            
+            existing["last_seen_index"] = i
         
         if is_overnight:
             current_day += 1
 
     # -----------------------------------------------------------
-    # 2. DRAW MARKERS (Standard vs Multi-Pin)
+    # 2. RENDER MARKERS
     # -----------------------------------------------------------
+    def get_color_name(val):
+        return {2: "green", 1: "orange", 0: "red"}.get(val, "red")
+        
+    def get_color_hex(val):
+        return {2: "#22c55e", 1: "#f97316", 0: "#ef4444"}.get(val, "#ef4444")
+
     for k, data in grouped_markers.items():
-        count = len(data["statuses"])
+        visits = data["visits"]
+        count = len(visits)
         
-        # --- BUILD POPUP CONTENT ---
+        # --- POPUP CONTENT ---
         popup_html = f"<b>{data['name']}</b><hr style='margin:4px 0'>"
-        for v in data["visits"]:
-            popup_html += f"• {v}<br>"
-        
-        unique_notes = list(set([n for n in data["notes"] if n]))
-        if unique_notes:
-            popup_html += "<hr style='margin:4px 0'><b>Note:</b><br>"
-            for n in unique_notes:
-                popup_html += f"- {n}<br>"
-        
-        # Tooltip
-        tooltip = f"{data['name']} ({count} step)" if count > 1 else f"{data['name']}"
+        stat_map = {0: "Da prenotare", 1: "Provvisorio", 2: "Prenotato"}
 
-        # --- DRAWING LOGIC ---
-        
-        # Colors: 0=Red, 1=Orange, 2=Green
-        def get_color_hex(val):
-            if val == 2: return "#22c55e" # Green
-            if val == 1: return "#f97316" # Orange
-            return "#ef4444"              # Red
-
-        if count == 1:
-            # STANDARD SINGLE MARKER (Looks cleaner for single stops)
-            val = data["statuses"][0]
-            if val == 2: c = "green"
-            elif val == 1: c = "orange"
-            else: c = "red"
+        for v in visits:
+            d_in = fmt_date(v['in_date'])
+            d_out = fmt_date(v['out_date'])
+            label = f"Giorno {v['in_day']} ➝ {v['out_day']}" if v['is_overnight'] else f"Giorno {v['in_day']}"
             
-            icon = folium.Icon(color=c, icon="bed" if data["is_overnight"] else "map-pin", prefix="fa")
+            c_hex = get_color_hex(v['status_val'])
+            popup_html += f"<div><span style='color:{c_hex};'>●</span> {label} ({d_in})<br><em style='font-size:0.85em;color:#555;'>{stat_map.get(v['status_val'])}</em></div>"
+            if v['note']: popup_html += f"<div style='font-size:0.85em;margin-left:14px;font-style:italic;'>{v['note']}</div>"
+            popup_html += "<div style='margin-bottom:6px;'></div>"
+
+        # Tooltip
+        tooltip = f"{data['name']} ({count} visite)" if count > 1 else data['name']
+
+        # --- DRAWING ---
+        if count == 1:
+            # === SINGLE MARKER (Use Standard Folium) ===
+            v = visits[0]
+            icon_name = "bed" if v['is_overnight'] else "map-pin"
+            color = get_color_name(v['status_val'])
+            
             folium.Marker(
                 [data["lat"], data["lon"]],
                 popup=popup_html,
                 tooltip=tooltip,
-                icon=icon
+                icon=folium.Icon(color=color, icon=icon_name, prefix="fa")
             ).add_to(m)
             
         else:
-            # MULTI-PIN "FAN" (DivIcon)
-            # We construct HTML to overlay FontAwesome icons slightly offset
-            
+            # === FANNED MARKERS (Custom HTML) ===
+            # We construct HTML that draws the Colored Pin AND overlays the white Bed icon
             icons_html = ""
-            # We limit to 4 icons max to prevent a massive line if you stay 14 nights
-            display_limit = min(count, 4) 
+            limit = min(count, 4)
+            overlap = 16
             
-            # Base width: 24px per icon, but overlapping by 12px
-            overlap = 14
-            total_width = (display_limit * overlap) + 10 
-            
-            for idx in range(display_limit):
-                c_hex = get_color_hex(data["statuses"][idx])
-                # Offset calculation
-                left_pos = idx * overlap
-                z_index = 100 - idx # Draw first on top, or last on top? Let's put First on TOP.
+            for idx in range(limit):
+                v = visits[idx]
+                c_hex = get_color_hex(v['status_val'])
                 
+                # Determine icon type (Bed or Pin)
+                fa_icon = "bed" if v['is_overnight'] else "map-pin"
+                
+                # Layout logic
+                left_pos = idx * overlap
+                z_index = 100 - idx # First one on top
+                
+                # Composite Icon HTML:
+                # 1. Background Pin (fa-map-marker) in correct color
+                # 2. Foreground Icon (fa-bed/map-pin) in white, absolutely centered
                 icons_html += f"""
-                <div style="position: absolute; left: {left_pos}px; top: 0; z-index: {z_index};">
-                    <i class="fa fa-map-marker" style="font-size: 32px; color: {c_hex}; 
-                    text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;"></i>
+                <div style="position: absolute; left: {left_pos}px; top: 0; z-index: {z_index}; filter: drop-shadow(0px 0px 1px white);">
+                    <div style="position: relative; width: 32px; height: 42px;">
+                        <i class="fa fa-map-marker" style="font-size: 38px; color: {c_hex}; position: absolute; top: 0; left: 0;"></i>
+                        <i class="fa fa-{fa_icon}" style="font-size: 14px; color: white; position: absolute; top: 8px; left: 10px;"></i>
+                    </div>
                 </div>
                 """
-                # Note: The text-shadow creates a white border around the pin so they don't blend together
             
-            # Small badge if we have more than 4
+            # Badge for +X
             if count > 4:
                 icons_html += f"""
-                <div style="position: absolute; left: {left_pos + 20}px; top: 0; background: white; border:1px solid #ccc; border-radius:50%; padding: 2px 5px; font-size: 10px; font-weight: bold;">+{count-4}</div>
+                <div style="position: absolute; left: {left_pos + 24}px; top: 0; background: #333; color: white; border-radius: 50%; padding: 2px 6px; font-size: 11px; font-weight: bold; z-index: 200;">+{count-4}</div>
                 """
 
+            total_width = (limit * overlap) + 32
+            
             div_icon = DivIcon(
-                icon_size=(total_width, 36),
-                icon_anchor=(total_width / 2, 36), # Center horizontally, anchor at bottom
-                html=f'<div style="position: relative; width: {total_width}px; height: 36px;">{icons_html}</div>'
+                icon_size=(total_width, 42),
+                icon_anchor=(16, 42), # Anchor at the tip of the FIRST pin
+                html=f'<div style="position: relative; width: {total_width}px; height: 42px;">{icons_html}</div>'
             )
             
             folium.Marker(
@@ -646,7 +654,7 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
                 icon=div_icon
             ).add_to(m)
 
-    # 3. DRAW LEGS (Standard)
+    # 3. DRAW LEGS
     current_day = 1
     for i in range(len(stops) - 1):
         leg = legs_between[i] if i < len(legs_between) else None
@@ -654,10 +662,11 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         is_prev_overnight = s_prev.get("overnight")
         leg_day = current_day + 1 if is_prev_overnight else current_day
         leg_date_str = fmt_date(day_to_date(leg_day))
+        
         if is_prev_overnight: current_day += 1
 
         if not leg or not leg.get("geometry_latlon"): continue
-
+        
         mode = (leg.get("mode") or "").lower()
         booking_status = leg.get("booking_status", "todo")
         color = "green" if booking_status == "booked" else "orange" if booking_status == "provisional" else "#3388ff"
@@ -666,16 +675,10 @@ def build_map(stops: List[Dict], legs_between: List[Optional[Dict]]) -> folium.M
         if mode == "bus": dash = "3, 8"
         elif mode == "train": dash = "10, 10"
         elif mode == "plane": dash = "20, 20"
-
+        
         mode_map = {"car": "Auto", "bus": "Bus", "train": "Treno", "plane": "Aereo", "ferry": "Traghetto"}
-        display_mode = mode_map.get(mode, mode.title())
-
-        tooltip = f"Giorno {leg_day} ({leg_date_str}) · {display_mode} · {stops[i]['name']} → {stops[i+1]['name']}"
-        if leg.get("duration_s") is not None:
-            tooltip += f" · {hhmm_from_seconds(leg['duration_s'])}"
-        if leg.get("distance_m") is not None:
-            tooltip += f" · {leg['distance_m']/1000:.1f} km"
-
+        tooltip = f"Giorno {leg_day} ({leg_date_str}) · {mode_map.get(mode, mode.title())}"
+        
         folium.PolyLine(
             leg["geometry_latlon"],
             weight=4, opacity=0.9, dash_array=dash, tooltip=tooltip, color=color,
