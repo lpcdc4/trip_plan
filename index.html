@@ -2,8 +2,7 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Viaggio Planner (Complete)</title>
+    <title>Viaggio Planner (Private)</title>
     
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -11,166 +10,279 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
     <style>
-        :root { --primary: #4285F4; --bg: #f8f9fa; --danger: #d93025; --success: #188038; }
-        html, body { height: 100%; margin: 0; padding: 0; font-family: 'Roboto', sans-serif; background: var(--bg); overflow: hidden; }
+        :root { --primary: #4285F4; --bg: #f8f9fa; --booked: #22c55e; --prov: #f97316; --todo: #ef4444; }
+        html, body { height: 100%; margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg); overflow: hidden; }
         #app { display: flex; width: 100%; height: 100%; }
         
-        /* Sidebar */
-        .sidebar { 
-            width: 350px; min-width: 300px; background: white; border-right: 1px solid #ddd; 
-            display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; 
-            overflow-y: auto; z-index: 10; box-shadow: 2px 0 5px rgba(0,0,0,0.05); 
+        /* GLOBAL TOOLTIP */
+        #global-tooltip {
+            position: absolute; display: none; background: rgba(0,0,0,0.9); color: white;
+            padding: 6px 12px; border-radius: 6px; font-size: 13px; pointer-events: none;
+            z-index: 99999; white-space: nowrap; transform: translate(15px, 15px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-weight: 500; border: 1px solid #444;
         }
 
-        /* Main Content */
+        /* LAYOUT */
+        .sidebar { width: 360px; min-width: 320px; background: white; border-right: 1px solid #ddd; display: flex; flex-direction: column; padding: 20px; overflow-y: auto; z-index: 20; box-shadow: 2px 0 8px rgba(0,0,0,0.05); }
         .main-content { flex: 1; display: flex; flex-direction: column; position: relative; height: 100%; }
-        #map { flex-grow: 1; width: 100%; background: #e5e3df; }
+        #map { flex-grow: 1; width: 100%; background: #e5e3df; position: relative; }
         
-        /* Itinerary Panel */
-        .itinerary-panel {
-            height: 35%; min-height: 200px; background: white; border-top: 1px solid #ddd;
-            display: flex; flex-direction: column; z-index: 5; box-shadow: 0 -4px 10px rgba(0,0,0,0.1);
-        }
-        .itinerary-header { padding: 15px 20px; border-bottom: 1px solid #eee; background: #fff; }
-        .itinerary-scroll { flex: 1; overflow-y: auto; padding: 20px; background: #f9f9f9; }
+        .itinerary-panel { height: 40%; min-height: 200px; background: white; border-top: 1px solid #ccc; display: flex; flex-direction: column; z-index: 10; box-shadow: 0 -4px 12px rgba(0,0,0,0.1); }
+        .itinerary-scroll { flex: 1; overflow-y: auto; padding: 15px; background: #f3f4f6; }
 
-        /* UI Elements */
-        input, select, button, textarea { width: 100%; padding: 10px 12px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 14px; }
-        button { cursor: pointer; background: var(--primary); color: white; border: none; font-weight: 600; padding: 12px; transition: opacity 0.2s; }
-        button:hover { opacity: 0.9; }
-        button.secondary { background: #f1f3f4; color: #3c4043; border: 1px solid #dadce0; }
-        button.danger { background: white; color: var(--danger); border: 1px solid var(--danger); width: auto; padding: 6px 12px; }
-        button.danger:hover { background: #fce8e6; }
-        button.tool-btn { font-size: 0.85rem; padding: 8px; margin-bottom: 5px; }
+        /* DAY BLOCKS */
+        .day-block { background: white; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .day-header { 
+            background: #e8eaed; padding: 12px 15px; font-weight: 700; color: #374151; border-bottom: 1px solid #ddd; 
+            font-size: 0.95rem; cursor: pointer; user-select: none; display: flex; justify-content: space-between; align-items: center;
+        }
+        .day-header:hover { background: #e2e4e8; }
+        
+        /* ITEMS */
+        .stop-row { padding: 12px 15px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: flex-start; transition: background 0.1s; }
+        .stop-row:hover { background: #f9fafb; }
+        .stop-row:last-child { border-bottom: none; }
+        
+        .leg-row { 
+            background: #f8fafc; padding: 8px 15px; border-top: 1px dashed #e5e7eb; border-bottom: 1px dashed #e5e7eb; 
+            color: #4b5563; font-size: 0.9rem; display: flex; align-items: center; gap: 10px; 
+            margin-left: 20px; border-left: 2px solid #cbd5e1; 
+        }
 
-        .stop-card {
-            background: #fff; border: 1px solid #e0e0e0; padding: 15px; margin-bottom: 10px; border-radius: 8px;
-            display: flex; justify-content: space-between; align-items: flex-start; 
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05); cursor: grab;
-        }
-        .stop-card:active { cursor: grabbing; }
+        /* EDIT MODE */
+        .edit-container { padding: 15px; background: #fff; }
+        .edit-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; padding: 10px; background: #f9fafb; border: 1px solid #eee; border-radius: 6px; }
+        .edit-leg-row { margin-left: 20px; border-left: 2px solid #ddd; padding-left: 10px; margin-bottom: 10px; }
+        .edit-label { font-size: 0.75rem; color: #666; font-weight: bold; margin-bottom: 2px; display: block; }
+        .edit-input { width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
 
-        .search-results {
-            max-height: 200px; overflow-y: auto; border: 1px solid #ddd; margin-top: -10px; margin-bottom: 10px; 
-            background: white; border-radius: 0 0 6px 6px; position: relative; z-index: 20;
+        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+        .dot-booked { background: var(--booked); }
+        .dot-prov { background: var(--prov); }
+        .dot-todo { background: var(--todo); }
+        .dot-visit { background: #9ca3af; }
+
+        /* UI */
+        .sidebar label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: #6b7280; margin-bottom: 4px; display: block; }
+        .sidebar input, .sidebar select, .sidebar textarea { width: 100%; padding: 8px 10px; margin-bottom: 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+        button { cursor: pointer; }
+        .sidebar button { width: 100%; padding: 10px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: 600; margin-bottom: 8px; }
+        .sidebar button.secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+        .sidebar button.danger { background: white; color: var(--danger); border: 1px solid var(--danger); width: auto; padding: 4px 8px; font-size: 0.8rem; }
+        .btn-small { padding: 4px 8px; font-size: 12px; border-radius: 4px; border: 1px solid #ccc; background: white; cursor: pointer; }
+        .btn-primary { background: var(--primary); color: white; border: none; font-weight: bold; }
+        
+        /* SEARCH & POPUP */
+        .search-results { position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: white; border: 1px solid #ddd; border-radius: 0 0 6px 6px; z-index: 50; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .search-item { padding: 10px; cursor: pointer; border-bottom: 1px solid #eee; }
+        .search-item:hover { background: #f3f4f6; }
+        .gm-style-iw { padding: 0 !important; overflow: hidden !important; border-radius: 8px !important; box-shadow: 0 4px 15px rgba(0,0,0,0.2) !important; }
+        .gm-style-iw-d { overflow: auto !important; max-height: 250px !important; padding: 0 !important; }
+        .gm-style-iw button { display: none !important; } 
+        .popup-container { font-family: 'Segoe UI', sans-serif; font-size: 13px; min-width: 240px; }
+        .popup-header { background: #f1f3f4; padding: 12px 15px; font-weight: 700; color: #202124; border-bottom: 1px solid #e0e0e0; }
+        .popup-content { padding: 12px 15px; }
+        .popup-row { margin-bottom: 10px; line-height: 1.4; padding-left: 10px; border-left: 3px solid #ddd; }
+        .popup-note { color: #5f6368; font-style: italic; font-size: 0.9em; margin-top: 3px; }
+        .popup-date { font-weight: 600; color: #3c4043; font-size: 1.05em;}
+        .popup-status { font-size: 0.8em; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-top:2px; }
+
+        /* AUTH OVERLAY - FULL BLOCKING */
+        .auth-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: #f8f9fa; z-index: 100000;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
         }
-        .search-result { padding: 10px; cursor: pointer; border-bottom: 1px solid #eee; }
-        .search-result:hover { background: #f1f3f4; }
-        
-        .leg-info {
-            background: #e8f0fe; color: #1967d2; font-size: 0.85rem; padding: 4px 8px; 
-            border-radius: 4px; margin-top: 8px; display: inline-flex; align-items: center; gap: 5px; font-weight: 500;
-        }
-        
-        h2 { margin: 0 0 15px 0; color: #202124; font-size: 1.4rem; }
-        h3 { margin: 15px 0 10px 0; font-size: 1rem; color: #5f6368; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
-        label { font-size: 0.75rem; color: #5f6368; font-weight: 700; display: block; margin-bottom: 4px; text-transform: uppercase; }
-        .badge { display: inline-block; width: 24px; height: 24px; line-height: 24px; border-radius: 50%; background: #4285F4; color: white; text-align: center; font-size: 12px; font-weight: bold; flex-shrink: 0; }
-        
-        /* Tools Section */
-        .tools-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+        .auth-box { width: 320px; padding: 40px; background: white; border: 1px solid #ddd; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; }
+        .auth-icon { font-size: 40px; margin-bottom: 15px; display:block; }
     </style>
 </head>
 <body>
 
 <div id="app">
-    <div class="sidebar">
-        <h2>🗺️ Planner</h2>
+    <div id="global-tooltip"></div>
 
-        <label>Seleziona Viaggio</label>
-        <select v-model="currentTripId" @change="switchTrip">
-            <option value="NEW">+ Nuovo Viaggio...</option>
-            <option v-for="t in tripList" :key="t.id" :value="t.id">
-                📂 {{ t.name }}
-            </option>
-        </select>
-        
-        <div v-if="trip.id" style="margin-bottom: 20px;">
-            <label>Nome Viaggio</label>
-            <input v-model="trip.name" @change="saveToCloud" placeholder="Il mio viaggio">
-            <label>Data Inizio</label>
-            <input type="date" v-model="trip.startDate" @change="saveToCloud">
-        </div>
-
-        <h3>➕ Aggiungi Tappa</h3>
-        <input type="text" v-model="searchQuery" @input="handleInput" placeholder="Cerca luogo (Google)...">
-        
-        <div v-if="predictions.length > 0" class="search-results">
-            <div v-for="p in predictions" :key="p.place_id" class="search-result" @click="selectPrediction(p)">
-                <strong>{{ p.structured_formatting.main_text }}</strong><br>
-                <span style="color:gray; font-size: 0.8rem;">{{ p.structured_formatting.secondary_text }}</span>
-            </div>
-        </div>
-
-        <div v-if="selectedPlace" style="background: #f1f8ff; padding: 15px; border-radius: 8px; border: 1px solid #d0e3ff; margin-bottom: 15px;">
-            <div style="font-weight: bold; color: #1a73e8; margin-bottom: 10px;">📍 {{ selectedPlace.name }}</div>
-            <div style="display: flex; align-items: center; margin-bottom: 10px;">
-                <input type="checkbox" id="overnight" v-model="newStop.overnight" style="width: auto; margin: 0 8px 0 0;">
-                <label for="overnight" style="margin: 0; cursor: pointer;">Pernottamento qui?</label>
-            </div>
-            <div v-if="newStop.overnight">
-                <select v-model="newStop.status">
-                    <option value="todo">Da prenotare</option>
-                    <option value="provisional">Provvisorio</option>
-                    <option value="booked">Prenotato</option>
-                </select>
-            </div>
-            <textarea v-model="newStop.note" placeholder="Note (es. Hotel Bellavista)..." rows="2"></textarea>
-            <div style="display: flex; gap: 10px;">
-                <button @click="addStop">Aggiungi</button>
-                <button class="secondary" @click="clearSelection">Annulla</button>
-            </div>
-        </div>
-
-        <div style="margin-top: auto;">
-            <h3>🛠️ Strumenti</h3>
-            <div class="tools-grid">
-                <button class="secondary tool-btn" @click="generatePDF">📄 PDF</button>
-                <button class="secondary tool-btn" @click="copyLink">🔗 Link</button>
-                <button class="secondary tool-btn" @click="exportJSON">⬇️ Json</button>
-                <button class="secondary tool-btn" @click="$refs.fileInput.click()">⬆️ Import</button>
-                <input type="file" ref="fileInput" style="display:none" accept=".json" @change="importJSON">
-            </div>
+    <div v-if="!user" class="auth-overlay">
+        <div class="auth-box">
+            <span class="auth-icon">🔒</span>
+            <h2 style="margin-top:0; color:#333;">Viaggio Planner</h2>
+            <p style="color:#666; font-size:0.95em; margin-bottom:25px; line-height:1.5;">Questo viaggio è privato.<br>Inserisci il PIN per accedere.</p>
             
-            <div class="tools-grid" style="margin-top: 8px;">
-                <button class="secondary tool-btn" @click="cloneTrip">©️ Clona</button>
-                <button class="danger tool-btn" @click="deleteTrip">🗑 Elimina</button>
+            <input type="password" v-model="authPin" @keyup.enter="signIn" placeholder="Inserisci PIN..." 
+                   style="width:100%; padding:12px; border:1px solid #ccc; border-radius:6px; margin-bottom:15px; font-size:16px; text-align:center;">
+            
+            <button @click="signIn" class="btn-primary" style="width:100%; padding:12px; font-size:16px;">Sblocca</button>
+            <p v-if="authError" style="color:#d93025; font-size:0.85em; margin-top:15px; font-weight:bold;">{{ authError }}</p>
+        </div>
+    </div>
+
+    <div class="sidebar">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h2>🗺️ Planner</h2>
+            <button v-if="user" @click="signOut" class="btn-small" style="width:auto; margin:0; background:#666;">🔒 Esci</button>
+        </div>
+        
+        <div style="margin-bottom: 20px;">
+            <label>Seleziona Viaggio</label>
+            <select v-model="currentTripId" @change="switchTrip">
+                <option value="NEW" v-if="user">+ Nuovo Viaggio...</option>
+                <option v-for="t in tripList" :key="t.id" :value="t.id">📂 {{ t.name }}</option>
+            </select>
+            <div v-if="trip.id" style="margin-top: 10px;">
+                <label>Nome Viaggio</label>
+                <input v-model="trip.name" @change="debouncedSave">
+                <label>Data Inizio</label>
+                <input type="date" v-model="trip.startDate" @change="debouncedSave">
+            </div>
+        </div>
+        <hr style="border:0; border-top:1px solid #eee; margin-bottom: 20px;">
+        
+        <div v-if="user">
+            <h3>➕ Nuova Tappa</h3>
+            <div style="position:relative;">
+                <input type="text" v-model="searchQuery" @input="handleInput" placeholder="Cerca luogo (Google)...">
+                <div v-if="predictions.length" class="search-results">
+                    <div v-for="p in predictions" :key="p.place_id" class="search-item" @click="selectPrediction(p)">
+                        <strong>{{ p.structured_formatting.main_text }}</strong><br>
+                        <small style="color:gray">{{ p.structured_formatting.secondary_text }}</small>
+                    </div>
+                </div>
             </div>
 
-            <div v-if="saving" style="text-align:center; color:#1a73e8; font-size:0.8rem; margin-top:10px; font-weight: bold;">☁️ Salvataggio...</div>
+            <div v-if="selectedPlace" style="background:#eff6ff; padding:15px; border-radius:8px; border:1px solid #bfdbfe; margin-bottom:15px;">
+                <div style="font-weight:bold; color:#1e40af; margin-bottom:10px;">📍 {{ selectedPlace.name }}</div>
+                <div style="display:flex; align-items:center; margin-bottom:10px;">
+                    <input type="checkbox" v-model="newStop.overnight" style="width:auto; margin:0 8px 0 0;">
+                    <label style="margin:0; cursor:pointer; color:#333;">Pernottamento</label>
+                </div>
+                <div v-if="newStop.overnight">
+                    <select v-model="newStop.status">
+                        <option value="todo">Da prenotare</option>
+                        <option value="provisional">Provvisorio</option>
+                        <option value="booked">Prenotato</option>
+                    </select>
+                </div>
+                <textarea v-model="newStop.note" placeholder="Note..." rows="2"></textarea>
+                <div v-if="trip.stops.length > 0" style="margin-top:10px; padding-top:10px; border-top:1px dashed #bfdbfe;">
+                    <label>Spostamento</label>
+                    <div style="display:flex; gap:5px;">
+                        <select v-model="newStop.legMode">
+                            <option value="car">Auto</option><option value="train">Treno</option><option value="plane">Aereo</option><option value="bus">Bus</option>
+                        </select>
+                        <select v-model="newStop.legStatus">
+                            <option value="todo">Da fare</option>
+                            <option value="provisional">Provv.</option>
+                            <option value="booked">Prenot.</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:10px;">
+                    <button @click="addStop">Aggiungi</button>
+                    <button class="secondary" @click="clearSelection">Annulla</button>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top:auto;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <button class="secondary" @click="generatePDF">📄 PDF</button>
+                <button class="secondary" @click="copyLink">🔗 Link</button>
+                <button class="secondary" @click="cloneTrip">©️ Clona</button>
+                <button class="secondary" style="color:#d93025; border-color:#d93025;" @click="deleteTrip">🗑 Elimina</button>
+            </div>
+            <div v-if="saving" style="text-align:center; font-size:0.8rem; color:#4285F4; margin-top:10px;">💾 Salvataggio...</div>
         </div>
     </div>
 
     <div class="main-content">
         <div id="map"></div>
         <div class="itinerary-panel">
-            <div class="itinerary-header">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <h3 style="margin:0; border:none;">Il tuo Itinerario</h3>
-                    <small style="color:gray">{{ trip.stops.length }} Tappe</small>
-                </div>
-            </div>
-            <div class="itinerary-scroll" id="sortable-list">
-                <div v-for="(stop, index) in trip.stops" :key="index" class="stop-card" :data-index="index">
-                    <div style="flex:1">
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <span class="badge">{{ index + 1 }}</span>
-                            <strong style="font-size: 1.1rem;">{{ stop.name }}</strong>
+            <div class="itinerary-scroll">
+                <div v-for="(day, dIdx) in itineraryDays" :key="dIdx" class="day-block">
+                    <div class="day-header" @click="toggleCollapse(dIdx)">
+                        <div>
+                            <span>Giorno {{ day.dayNum }} ({{ formatDate(day.date) }})</span>
+                            <span v-if="day.summary" style="font-weight:normal; color:#555;"> · {{ day.summary }}</span>
+                            <span style="font-weight:normal; color:#555;"> · {{ day.routeStr }}</span>
                         </div>
-                        <div style="padding-left: 34px; margin-top:4px; font-size:0.9rem; color:#666;">
-                            <span v-if="stop.overnight">{{ getStatusIcon(stop.status) }} {{ formatStatus(stop.status) }}</span>
-                            <span v-else>📍 Visita rapida</span>
-                            <span v-if="stop.note"> — <em>{{ stop.note }}</em></span>
-                        </div>
-                        <div v-if="legs[index]" style="padding-left: 34px;">
-                            <div class="leg-info">🚗 Guida: {{ legs[index].text }}</div>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <button class="btn-small" @click.stop="toggleEditDay(dIdx)">✏️ Modifica</button>
+                            <span style="color:#888; font-size:0.8em;">{{ collapsedState[dIdx] ? '▼' : '▲' }}</span>
                         </div>
                     </div>
-                    <button class="danger" @click="removeStop(index)" title="Rimuovi">✕</button>
+
+                    <div v-if="!collapsedState[dIdx] && editingDayIdx !== dIdx">
+                        <div v-for="(item, sIdx) in day.items" :key="sIdx">
+                            <div v-if="item.legBefore && !item.legBefore.isSameLocation" class="leg-row">
+                                <span style="font-size:1.2em;">{{ getTransportIcon(item.legBefore.mode) }}</span>
+                                <strong>{{ getTransportName(item.legBefore.mode) }}</strong>
+                                <span v-if="item.legBefore.duration_s" style="color:#4285F4;">
+                                    {{ formatDuration(item.legBefore.duration_s) }}
+                                </span>
+                                <span style="flex:1;"></span>
+                                <div :class="['status-dot', 'dot-' + (item.legBefore.booking_status || 'todo')]" title="Stato"></div>
+                            </div>
+                            <div class="stop-row">
+                                <div style="flex:1;">
+                                    <div style="display:flex; align-items:center;">
+                                        <div :class="['status-dot', item.stop.overnight ? 'dot-' + item.stop.booking_status : 'dot-visit']"></div>
+                                        <strong style="font-size:1.05rem;">{{ item.stop.name }}</strong>
+                                    </div>
+                                    <div style="padding-left:16px; font-size:0.9rem; color:#666; margin-top:2px;">
+                                        <span v-if="item.stop.overnight">Pernottamento</span>
+                                        <span v-else>Visita</span>
+                                        <span v-if="item.stop.note"> · <em>{{ item.stop.note }}</em></span>
+                                    </div>
+                                </div>
+                                <button class="danger" @click="removeStop(item.globalIndex)">✕</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="editingDayIdx === dIdx" class="edit-container">
+                        <div v-for="(item, sIdx) in day.items" :key="sIdx">
+                            <div v-if="item.legBefore" class="edit-leg-row">
+                                <span class="edit-label">Spostamento</span>
+                                <div style="display:grid; grid-template-columns: 1fr 1fr 2fr; gap:5px;">
+                                    <select v-model="trip.legs_between[item.globalIndex - 1].mode" class="edit-input">
+                                        <option value="car">Auto</option><option value="train">Treno</option><option value="plane">Aereo</option><option value="bus">Bus</option>
+                                    </select>
+                                    <select v-model="trip.legs_between[item.globalIndex - 1].booking_status" class="edit-input">
+                                        <option value="todo">Da fare</option><option value="provisional">Provv.</option><option value="booked">Prenot.</option>
+                                    </select>
+                                    <input v-model="trip.legs_between[item.globalIndex - 1].note" class="edit-input" placeholder="Note viaggio">
+                                </div>
+                            </div>
+                            <div class="edit-row">
+                                <div style="grid-column: 1 / -1; position:relative;">
+                                    <span class="edit-label">Nome / Cerca</span>
+                                    <input class="edit-input" 
+                                           :value="activeSearchIdx === item.globalIndex ? moveQuery : trip.stops[item.globalIndex].name"
+                                           @input="e => handleEditSearch(e, item.globalIndex)"
+                                           @focus="startEditSearch(item.globalIndex, trip.stops[item.globalIndex].name)"
+                                           placeholder="Modifica nome...">
+                                    <div v-if="activeSearchIdx === item.globalIndex && movePredictions.length" class="search-results" style="top:55px;">
+                                        <div v-for="p in movePredictions" class="search-item" @click="applyEditSearch(item.globalIndex, p)">
+                                            {{ p.structured_formatting.main_text }}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div><span class="edit-label">Pernottamento</span><input type="checkbox" v-model="trip.stops[item.globalIndex].overnight"></div>
+                                <div v-if="trip.stops[item.globalIndex].overnight">
+                                    <span class="edit-label">Stato</span>
+                                    <select v-model="trip.stops[item.globalIndex].booking_status" class="edit-input">
+                                        <option value="todo">Da pren.</option><option value="provisional">Provv.</option><option value="booked">Prenot.</option>
+                                    </select>
+                                </div>
+                                <div style="grid-column: 1 / -1;"><span class="edit-label">Note</span><input class="edit-input" v-model="trip.stops[item.globalIndex].note"></div>
+                            </div>
+                        </div>
+                        <div style="text-align:right; margin-top:10px;">
+                            <button class="btn-small btn-primary" @click="finishEdit">💾 Salva Modifiche</button>
+                        </div>
+                    </div>
                 </div>
-                <div v-if="trip.stops.length === 0" style="text-align:center; padding:30px; color:#999;">
-                    Nessuna tappa.
-                </div>
+                <div v-if="trip.stops.length === 0" style="text-align:center; padding:40px; color:#aaa;">Nessuna tappa presente.</div>
             </div>
         </div>
     </div>
@@ -178,20 +290,16 @@
 
 <script>
     // =========================================================================
-    // ⬇️⬇️⬇️  CONFIGURATION AREA - EDIT HERE  ⬇️⬇️⬇️
+    // CONFIGURATION
     // =========================================================================
-    
     const GOOGLE_MAPS_API_KEY = "AIzaSyAdstaSUOyOl6PE-UWC8d3q-W5y092K-z4";
     const SUPABASE_URL        = "https://bymrrkyfyjzjrtppxjdg.supabase.co"; 
     const SUPABASE_KEY        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5bXJya3lmeWp6anJ0cHB4amRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNzIyMDksImV4cCI6MjA4MTc0ODIwOX0.1IEvjgsBwiGwjASeVkQBVBXbRDSt55Fm07nWtvB0N2I";
 
-
-    // =========================================================================
-    // ⬆️⬆️⬆️  END CONFIGURATION - DO NOT EDIT BELOW  ⬆️⬆️⬆️
-    // =========================================================================
+    const SHARED_EMAIL        = "admin@viaggio.it"; // UPDATE THIS TO MATCH SUPABASE USER
 
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-    const { createApp, ref, reactive, onMounted } = Vue;
+    const { createApp, ref, reactive, onMounted, computed, watch } = Vue;
 
     function loadGoogleMapsScript(callback) {
         if (typeof google !== 'undefined') { callback(); return; }
@@ -204,269 +312,409 @@
 
     createApp({
         setup() {
-            // State
+            // STATE
+            const trip = reactive({ id: null, name: "Nuovo Viaggio", startDate: new Date().toISOString().split('T')[0], stops: [], legs_between: [] });
             const tripList = ref([]);
             const currentTripId = ref(null);
             
-            const trip = reactive({ id: null, name: "Nuovo Viaggio", startDate: new Date().toISOString().split('T')[0], stops: [] });
-            const legs = ref([]); 
-            
+            // AUTH (PIN SYSTEM)
+            const user = ref(null);
+            const authPin = ref("");
+            const authError = ref("");
+
             const searchQuery = ref("");
             const predictions = ref([]);
             const selectedPlace = ref(null);
-            const newStop = reactive({ overnight: true, status: "todo", note: "" });
+            const newStop = reactive({ overnight: true, status: "todo", note: "", legMode: "car", legStatus: "todo" });
+            
             const saving = ref(false);
+            const collapsedState = reactive({}); 
+            const editingDayIdx = ref(null);
+            const activeSearchIdx = ref(null);
+            const moveQuery = ref("");
+            const movePredictions = ref([]);
+            const isHoveringMarker = ref(false);
 
-            let map, directionsService, placesService, autocompleteService;
-            let markers = [], polylines = [];
+            let map, directionsService, placesService, autocompleteService, infoWindow;
+            let markers = [], polylines = [], ghostPolylines = [];
+            let groupedMarkers = {}; 
 
-            onMounted(() => {
-                loadGoogleMapsScript(() => {
-                    initGoogleMaps();
-                    fetchAllTrips().then(() => {
-                        // Check URL for ID, else default to first or new
-                        const p = new URLSearchParams(window.location.search);
-                        const tid = p.get('trip_id');
-                        if (tid) {
-                            loadTripById(tid);
-                        } else {
-                            // If no ID in URL, create a new one automatically
-                            createNewTrip();
-                        }
-                    });
-                    initSortable();
+            watch(() => trip.name, (newName) => { document.title = newName || "Planner"; }, { immediate: true });
+
+            // AUTH METHODS
+            const signIn = async () => {
+                if(!authPin.value || authPin.value.length < 6) {
+                    authError.value = "Il PIN deve avere almeno 6 caratteri"; return;
+                }
+                const { data, error } = await supabaseClient.auth.signInWithPassword({ 
+                    email: SHARED_EMAIL, 
+                    password: authPin.value 
                 });
+                
+                if (error) {
+                    authError.value = "PIN non valido";
+                } else {
+                    user.value = data.user;
+                    authError.value = "";
+                    // Reload data after successful login to ensure RLS allows read
+                    await fetchTrips();
+                    const p = new URLSearchParams(window.location.search);
+                    const tid = p.get('trip_id');
+                    if (tid) await loadTrip(tid); else createNewTrip();
+                }
+            };
+            const signOut = async () => { 
+                await supabaseClient.auth.signOut(); 
+                user.value = null; 
+                tripList.value = [];
+                // Clear map
+                if (map) { markers.forEach(m => m.setMap(null)); polylines.forEach(p => p.setMap(null)); ghostPolylines.forEach(p => p.setMap(null)); }
+            };
+
+            const itineraryDays = computed(() => {
+                const stops = trip.stops;
+                const legs = trip.legs_between;
+                if (!stops.length) return [];
+                const blocks = [];
+                let dayNum = 1;
+                let dateObj = new Date(trip.startDate);
+                let startIdx = 0;
+
+                for (let i = 0; i < stops.length; i++) {
+                    const isLast = (i === stops.length - 1);
+                    const stop = stops[i];
+                    
+                    if (stop.overnight || isLast) {
+                        const blockStops = [];
+                        for (let k = startIdx; k <= i; k++) {
+                            let legOut = (k < stops.length - 1) ? legs[k] : null;
+                            if (k === i && !isLast) legOut = null; 
+                            
+                            let isSame = false;
+                            if (legOut && k < stops.length - 1) {
+                                if (stops[k].name === stops[k+1].name) isSame = true;
+                            }
+                            if (legOut) legOut.isSameLocation = isSame;
+
+                            blockStops.push({
+                                stop: stops[k],
+                                legAfter: legOut,
+                                globalIndex: k,
+                                isOverlapStart: (k === startIdx && startIdx > 0),
+                                legBefore: (k > startIdx && k > 0) ? legs[k-1] : null
+                            });
+                        }
+
+                        const modes = new Set();
+                        let driveSecs = 0;
+                        blockStops.forEach(item => {
+                            if (item.legBefore && !item.legBefore.isSameLocation) {
+                                const m = (item.legBefore.mode || 'car').toLowerCase();
+                                if (m === 'car' || m === 'auto') { modes.add('Guida'); driveSecs += (item.legBefore.duration_s || 0); }
+                                else if (m === 'train') modes.add('Treno');
+                                else if (m === 'plane') modes.add('Volo');
+                                else if (m === 'bus') modes.add('Bus');
+                            }
+                        });
+
+                        const timeParts = [];
+                        if(driveSecs > 0) timeParts.push(`Guida (${formatDuration(driveSecs)})`);
+                        const otherModes = Array.from(modes).filter(m => m !== 'Guida');
+                        timeParts.push(...otherModes);
+                        const summary = timeParts.join(" + ");
+
+                        const startName = blockStops[0].stop.name;
+                        const endName = blockStops[blockStops.length - 1].stop.name;
+                        const routeStr = (startName === endName) ? startName : `${startName} ➝ ${endName}`;
+
+                        blocks.push({
+                            dayNum: dayNum, date: new Date(dateObj), items: blockStops, summary, startName, endName, routeStr
+                        });
+
+                        if (!isLast) {
+                            dayNum++;
+                            dateObj.setDate(dateObj.getDate() + 1);
+                            startIdx = i;
+                        }
+                    }
+                }
+                blocks.forEach((_, idx) => { if (collapsedState[idx] === undefined) collapsedState[idx] = true; });
+                return blocks;
             });
 
-            // --- 1. TRIP MANAGEMENT (LOAD/SWITCH/LIST) ---
-            const fetchAllTrips = async () => {
-                // Get list of trips for dropdown
-                const { data } = await supabaseClient.from('itineraries').select('trip_id, trip_data');
-                if (data) {
-                    tripList.value = data
-                        .filter(row => !row.trip_data.is_deleted) // Filter out deleted
-                        .map(row => ({
-                            id: row.trip_id,
-                            name: row.trip_data.name || "Senza Nome"
-                        }))
-                        .sort((a, b) => a.name.localeCompare(b.name));
-                }
-            };
-
-            const switchTrip = () => {
-                if (currentTripId.value === 'NEW') {
-                    createNewTrip();
-                } else {
-                    loadTripById(currentTripId.value);
-                }
-            };
-
-            const loadTripById = async (tid) => {
-                currentTripId.value = tid;
-                trip.id = tid;
-                window.history.pushState({}, '', `?trip_id=${tid}`);
+            onMounted(async () => {
+                const { data } = await supabaseClient.auth.getSession();
+                user.value = data.session?.user || null;
                 
-                const { data } = await supabaseClient.from('itineraries').select('trip_data').eq('trip_id', tid).single();
-                if (data && data.trip_data) {
-                    trip.name = data.trip_data.name;
-                    trip.startDate = data.trip_data.trip_start_date;
-                    trip.stops = data.trip_data.stops || [];
-                    refreshMap();
+                if(user.value) {
+                    await fetchTrips();
+                    const p = new URLSearchParams(window.location.search);
+                    const tid = p.get('trip_id');
+                    if (tid) await loadTrip(tid); else createNewTrip();
                 }
-            };
-
-            const createNewTrip = () => {
-                const newId = Math.random().toString(36).substring(2, 10);
-                trip.id = newId;
-                trip.name = "Nuovo Viaggio";
-                trip.stops = [];
-                trip.startDate = new Date().toISOString().split('T')[0];
-                currentTripId.value = newId;
-                window.history.pushState({}, '', `?trip_id=${newId}`);
-                refreshMap();
-                saveToCloud(); // Save immediately so it appears in list
-            };
-
-            const cloneTrip = () => {
-                if (!confirm("Vuoi clonare questo viaggio?")) return;
-                const newId = Math.random().toString(36).substring(2, 10);
-                trip.id = newId;
-                trip.name = trip.name + " (Copia)";
-                currentTripId.value = newId;
-                window.history.pushState({}, '', `?trip_id=${newId}`);
-                saveToCloud();
-                alert("Viaggio clonato!");
-            };
-
-            const deleteTrip = async () => {
-                if (!confirm("Sei sicuro di voler eliminare questo viaggio?")) return;
-                // Soft delete
-                const payload = { ...toRawPayload(), is_deleted: true };
-                await supabaseClient.from('itineraries').upsert({ trip_id: trip.id, trip_data: payload });
                 
-                // Refresh list and switch to new
-                await fetchAllTrips();
-                createNewTrip();
-            };
+                loadGoogleMapsScript(initGoogleMaps);
+            });
 
-            // --- 2. GOOGLE MAPS & ROUTING ---
             const initGoogleMaps = () => {
-                const rome = { lat: 41.9028, lng: 12.4964 };
-                map = new google.maps.Map(document.getElementById("map"), {
-                    zoom: 6, center: rome, mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
-                    styles: [{ "featureType": "poi", "elementType": "labels", "stylers": [{ "visibility": "off" }] }]
+                map = new google.maps.Map(document.getElementById("map"), { zoom: 6, center: { lat: 41.9, lng: 12.5 }, streetViewControl: false });
+                infoWindow = new google.maps.InfoWindow();
+                map.addListener("click", () => { infoWindow.close(); });
+                const tt = document.getElementById("global-tooltip");
+                document.addEventListener('mousemove', (e) => {
+                    if(tt.style.display === 'block'){ tt.style.left = (e.pageX + 15) + 'px'; tt.style.top = (e.pageY + 15) + 'px'; }
                 });
                 directionsService = new google.maps.DirectionsService();
-                placesService = new google.maps.PlacesService(map);
+                placesService = new google.maps.places.PlacesService(map);
                 autocompleteService = new google.maps.places.AutocompleteService();
+                if (trip.stops.length) renderMap();
             };
 
-            const refreshMap = async () => {
+            const renderMap = async () => {
                 if (!map) return;
-                markers.forEach(m => m.setMap(null)); polylines.forEach(p => p.setMap(null));
-                markers = []; polylines = []; legs.value = new Array(Math.max(0, trip.stops.length - 1)).fill(null);
-                
-                if (trip.stops.length === 0) return;
+                markers.forEach(m => m.setMap(null)); polylines.forEach(p => p.setMap(null)); ghostPolylines.forEach(p => p.setMap(null));
+                markers = []; polylines = []; ghostPolylines = []; groupedMarkers = {};
                 const bounds = new google.maps.LatLngBounds();
 
                 trip.stops.forEach((s, i) => {
-                    const pos = { lat: s.lat, lng: s.lon };
-                    markers.push(new google.maps.Marker({ position: pos, map: map, label: (i+1).toString(), title: s.name }));
-                    bounds.extend(pos);
-                });
-                map.fitBounds(bounds);
-                if (trip.stops.length === 1) map.setZoom(10);
-                if (trip.stops.length > 1) { for (let i = 0; i < trip.stops.length - 1; i++) await calculateLeg(i); }
-            };
-
-            const calculateLeg = (idx) => {
-                return new Promise((resolve) => {
-                    const start = trip.stops[idx], end = trip.stops[idx+1];
-                    directionsService.route({
-                        origin: { lat: start.lat, lng: start.lon },
-                        destination: { lat: end.lat, lng: end.lon },
-                        travelMode: google.maps.TravelMode.DRIVING
-                    }, (res, status) => {
-                        if (status === google.maps.DirectionsStatus.OK) {
-                            polylines.push(new google.maps.Polyline({
-                                path: res.routes[0].overview_path, strokeColor: "#4285F4", strokeOpacity: 0.7, strokeWeight: 5,
-                                icons: [{ icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW }, offset: '50%' }], map: map
-                            }));
-                            const l = res.routes[0].legs[0];
-                            legs.value[idx] = { text: `${l.duration.text} (${l.distance.text})`, seconds: l.duration.value };
+                    const key = `${s.lat.toFixed(4)},${s.lon.toFixed(4)}`;
+                    let dayLabel = "", fullDate = "";
+                    for(const block of itineraryDays.value) {
+                        for(const item of block.items) {
+                            if(item.globalIndex === i) {
+                                fullDate = formatDate(block.date); dayLabel = `Giorno ${block.dayNum}`;
+                            }
                         }
-                        resolve();
-                    });
-                });
-            };
-
-            // --- 3. UI INTERACTIONS ---
-            const handleInput = () => {
-                if (!searchQuery.value || searchQuery.value.length < 3) { predictions.value = []; return; }
-                autocompleteService.getPlacePredictions({ input: searchQuery.value }, (results, status) => {
-                    predictions.value = (status === google.maps.places.PlacesServiceStatus.OK && results) ? results : [];
-                });
-            };
-
-            const selectPrediction = (p) => {
-                placesService.getDetails({ placeId: p.place_id }, (place, status) => {
-                    if (status === google.maps.places.PlacesServiceStatus.OK) {
-                        selectedPlace.value = { name: place.name, lat: place.geometry.location.lat(), lon: place.geometry.location.lng() };
-                        predictions.value = []; searchQuery.value = "";
                     }
+                    if (!groupedMarkers[key]) groupedMarkers[key] = { lat: s.lat, lon: s.lon, name: s.name, visits: [] };
+                    groupedMarkers[key].visits.push({ dayLabel, fullDate, isOvernight: s.overnight, status: s.booking_status, note: s.note });
+                    bounds.extend({lat: s.lat, lng: s.lon});
                 });
+                if (trip.stops.length > 0) map.fitBounds(bounds);
+
+                Object.values(groupedMarkers).forEach(group => {
+                    let color = "gray", isAnyOvernight = group.visits.some(v => v.isOvernight);
+                    if (isAnyOvernight) {
+                        const v = group.visits.find(x => x.isOvernight);
+                        if (v.status === 'booked') color = "green"; else if (v.status === 'provisional') color = "orange"; else color = "red";
+                    }
+                    const icon = getMarkerIcon(color, isAnyOvernight);
+                    const hoverTitle = `${group.name} · ${group.visits.map(v => v.fullDate).join(", ")}`;
+                    const m = new google.maps.Marker({ position: { lat: group.lat, lng: group.lon }, map: map, icon: icon, zIndex: 99999999 });
+                    
+                    const tt = document.getElementById("global-tooltip");
+                    m.addListener("mouseover", () => { isHoveringMarker.value = true; tt.innerText = hoverTitle; tt.style.display = 'block'; });
+                    m.addListener("mouseout", () => { isHoveringMarker.value = false; tt.style.display = 'none'; });
+                    m.addListener("click", () => {
+                        let html = `<div class="popup-container"><div class="popup-header"><span>${group.name}</span></div><div class="popup-content">`;
+                        group.visits.forEach(v => {
+                            let dotC = "#aaa", statT = "Visita";
+                            if(v.isOvernight) {
+                                if(v.status=='booked') { dotC="#22c55e"; statT="Prenotato"; } else if(v.status=='provisional') { dotC="#f97316"; statT="Provvisorio"; } else { dotC="#ef4444"; statT="Da prenotare"; }
+                            }
+                            html += `<div class="popup-row" style="border-left-color:${dotC}"><div class="popup-date">${v.fullDate} <span style="font-weight:normal;color:#666">(${v.dayLabel})</span></div><div class="popup-status" style="color:${dotC}">${statT}</div>${v.note ? `<div class="popup-note">${v.note}</div>` : ''}</div>`;
+                        });
+                        html += `</div></div>`;
+                        infoWindow.setContent(html); infoWindow.open(map, m);
+                    });
+                    markers.push(m);
+                });
+
+                for (let i = 0; i < trip.stops.length - 1; i++) {
+                    const leg = trip.legs_between[i];
+                    if (leg) await drawLegOnMap(trip.stops[i], trip.stops[i+1], leg, i);
+                }
             };
 
-            const addStop = () => {
-                if (!selectedPlace.value) return;
-                trip.stops.push({ ...selectedPlace.value, overnight: newStop.overnight, status: newStop.status, note: newStop.note });
-                selectedPlace.value = null; newStop.note = "";
-                saveToCloud(); refreshMap();
+            const getMarkerIcon = (colorName, isOvernight) => {
+                const colors = { green: "#72b026", orange: "#f69730", red: "#d63e2a", gray: "#a3a3a3" };
+                const c = colors[colorName] || colors.gray;
+                if (!isOvernight) {
+                    const dotSvg = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="7" fill="${c}" stroke="white" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="white"/></svg>`;
+                    return { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(dotSvg), scaledSize: new google.maps.Size(24, 24), anchor: new google.maps.Point(12, 12) };
+                }
+                const bedPath = `<path transform="translate(9, 10) scale(0.035)" d="M176 256c44.11 0 80-35.89 80-80s-35.89-80-80-80-80 35.89-80 80 35.89 80 80 80zm352-128H304c-8.84 0-16 7.16-16 16v144H64V80c0-8.84-7.16-16-16-16H16C7.16 64 0 71.16 0 80v352c0 8.84 7.16 16 16 16h32c8.84 0 16-7.16 16-16v-48h448v48c0 8.84 7.16 16 16 16h32c8.84 0 16-7.16 16-16V240c0-61.86-50.14-112-112-112z" fill="white"/>`;
+                const svg = `<svg width="36" height="46" viewBox="0 0 36 46" xmlns="http://www.w3.org/2000/svg"><path d="M18,0 C8.0748,0 0,8.0748 0,18 C0,27.9252 18,46 18,46 C18,46 36,27.9252 36,18 C36,8.0748 27.9252,0 18,0 Z" fill="${c}" stroke="rgba(0,0,0,0.4)" stroke-width="1"/>${bedPath}</svg>`;
+                return { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg), scaledSize: new google.maps.Size(36, 46), anchor: new google.maps.Point(18, 46) };
             };
 
-            const removeStop = (idx) => { trip.stops.splice(idx, 1); saveToCloud(); refreshMap(); };
-            const clearSelection = () => { selectedPlace.value = null; newStop.note = ""; };
+            const drawLegOnMap = async (start, end, leg, idx) => {
+                const mode = (leg.mode || 'car').toLowerCase();
+                let color = "#3388ff"; 
+                if (leg.booking_status === 'booked') color = "#72b026"; else if (leg.booking_status === 'provisional') color = "#f69730";
 
-            const toRawPayload = () => ({
-                name: trip.name, trip_start_date: trip.startDate, stops: trip.stops, last_updated: new Date().toISOString()
-            });
+                let icons = [];
+                if (mode !== 'car' && mode !== 'auto') {
+                    let gap = (mode === 'plane') ? '20px' : '15px';
+                    icons = [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3, strokeWeight: 3 }, offset: '0', repeat: gap }];
+                }
 
-            let saveTimeout;
-            const saveToCloud = () => {
-                saving.value = true; clearTimeout(saveTimeout);
-                saveTimeout = setTimeout(async () => {
-                    await supabaseClient.from('itineraries').upsert({ trip_id: trip.id, trip_data: toRawPayload() });
-                    saving.value = false;
-                    fetchAllTrips(); // Refresh dropdown list names
-                }, 1000);
-            };
+                let pathPoints = [];
+                let polyOptions = {};
 
-            // --- 4. EXPORT / IMPORT / PDF ---
-            const exportJSON = () => {
-                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(toRawPayload(), null, 2));
-                const a = document.createElement('a');
-                a.setAttribute("href", dataStr);
-                a.setAttribute("download", `viaggio_${trip.id}.json`);
-                document.body.appendChild(a); a.click(); a.remove();
-            };
+                if (mode === 'car' || mode === 'auto') {
+                    await new Promise(r => {
+                        directionsService.route({
+                            origin: { lat: start.lat, lng: start.lon }, destination: { lat: end.lat, lng: end.lon }, travelMode: google.maps.TravelMode.DRIVING
+                        }, (res, status) => {
+                            if (status === 'OK') {
+                                pathPoints = res.routes[0].overview_path;
+                                polyOptions = { path: pathPoints, strokeColor: color, strokeOpacity: 0.8, strokeWeight: 5, zIndex: 10 };
+                                const l = res.routes[0].legs[0];
+                                leg.distance_m = l.distance.value; leg.duration_s = l.duration.value;
+                            }
+                            r();
+                        });
+                    });
+                } else {
+                    pathPoints = [{ lat: start.lat, lng: start.lon }, { lat: end.lat, lng: end.lon }];
+                    polyOptions = { path: pathPoints, strokeColor: color, strokeOpacity: 0, strokeWeight: 0, icons: icons, geodesic: true, zIndex: 10 };
+                }
 
-            const importJSON = (event) => {
-                const file = event.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    try {
-                        const json = JSON.parse(e.target.result);
-                        if (confirm("Sovrascrivere il viaggio corrente?")) {
-                            trip.name = json.name || trip.name;
-                            trip.startDate = json.trip_start_date || trip.startDate;
-                            trip.stops = json.stops || [];
-                            refreshMap();
-                            saveToCloud();
+                if (pathPoints.length > 0) {
+                    const visiblePoly = new google.maps.Polyline({ ...polyOptions, map: map, clickable: false });
+                    polylines.push(visiblePoly);
+                    const ghostPoly = new google.maps.Polyline({ path: pathPoints, strokeColor: "white", strokeOpacity: 0, strokeWeight: 12, zIndex: 10, map: map, geodesic: (mode !== 'car' && mode !== 'auto') });
+                    ghostPolylines.push(ghostPoly);
+
+                    let legDateStr = "", legDayNum = 0;
+                    for(const block of itineraryDays.value) {
+                        for(const item of block.items) {
+                            if(item.globalIndex === idx + 1) { 
+                                legDateStr = formatDate(block.date); legDayNum = block.dayNum;
+                            }
                         }
-                    } catch (err) { alert("File JSON non valido"); }
-                };
-                reader.readAsText(file);
+                    }
+
+                    const modeName = {car:'Auto', train:'Treno', plane:'Volo', bus:'Bus'}[mode] || mode;
+                    let tooltipText = `${modeName.toUpperCase()} · ${legDateStr} (n. ${legDayNum})`;
+                    if(mode === 'car' || mode === 'auto') tooltipText += ` · ${formatDuration(leg.duration_s)}`;
+
+                    const tt = document.getElementById("global-tooltip");
+                    google.maps.event.addListener(ghostPoly, 'mouseover', () => {
+                        if (isHoveringMarker.value) return; 
+                        tt.innerText = tooltipText; tt.style.display = 'block';
+                        if(mode === 'car' || mode === 'auto') visiblePoly.setOptions({ strokeOpacity: 1.0, strokeWeight: 7 }); else visiblePoly.setOptions({ strokeOpacity: 0.5 });
+                    });
+                    google.maps.event.addListener(ghostPoly, 'mouseout', () => {
+                        tt.style.display = 'none';
+                        if(mode === 'car' || mode === 'auto') visiblePoly.setOptions({ strokeOpacity: 0.8, strokeWeight: 5 }); else visiblePoly.setOptions({ strokeOpacity: 0 });
+                    });
+                    google.maps.event.addListener(ghostPoly, 'click', (e) => {
+                        if (isHoveringMarker.value) return; 
+                        let content = `<div class="popup-container"><div class="popup-header"><span>${modeName.toUpperCase()}</span></div><div class="popup-content">`;
+                        if (mode === 'car' || mode === 'auto') content += `<div style="font-size:1.1em; font-weight:bold;">${formatDuration(leg.duration_s)}</div><div style="color:#666;">${(leg.distance_m/1000).toFixed(1)} km</div>`;
+                        if(leg.note) content += `<div class="popup-note">${leg.note}</div>`;
+                        content += `</div></div>`;
+                        infoWindow.setContent(content); infoWindow.setPosition(e.latLng); infoWindow.open(map);
+                    });
+                }
+            };
+
+            const toggleCollapse = (dIdx) => { collapsedState[dIdx] = !collapsedState[dIdx]; };
+            const toggleEditDay = (dIdx) => { if(editingDayIdx.value === dIdx) { editingDayIdx.value = null; activeSearchIdx.value = null; } else { editingDayIdx.value = dIdx; collapsedState[dIdx] = false; } };
+            const finishEdit = () => { editingDayIdx.value = null; debouncedSave(); renderMap(); };
+            
+            const startEditSearch = (idx, currentName) => { activeSearchIdx.value = idx; moveQuery.value = currentName; };
+            const handleEditSearch = (e, idx) => { trip.stops[idx].name = e.target.value; moveQuery.value = e.target.value; if(e.target.value.length < 3) return; autocompleteService.getPlacePredictions({ input: e.target.value }, (res, status) => { movePredictions.value = (status === 'OK') ? res : []; }); };
+            const applyEditSearch = (idx, p) => { placesService.getDetails({ placeId: p.place_id }, (place, status) => { if (status === 'OK') { trip.stops[idx].lat = place.geometry.location.lat(); trip.stops[idx].lon = place.geometry.location.lng(); trip.stops[idx].name = place.name; movePredictions.value = []; activeSearchIdx.value = null; debouncedSave(); renderMap(); } }); };
+
+            const fetchTrips = async () => { const { data } = await supabaseClient.from('itineraries').select('trip_id, trip_data'); if (data) tripList.value = data.filter(r => r.trip_data && !r.trip_data.is_deleted).map(r => ({ id: r.trip_id, name: r.trip_data.name })); };
+            const loadTrip = async (tid) => {
+                currentTripId.value = tid; trip.id = tid; window.history.pushState({}, '', `?trip_id=${tid}`);
+                const { data } = await supabaseClient.from('itineraries').select('trip_data').eq('trip_id', tid).single();
+                if (data && data.trip_data) {
+                    trip.name = data.trip_data.name; trip.startDate = data.trip_data.trip_start_date;
+                    trip.stops = data.trip_data.stops || []; trip.legs_between = data.trip_data.legs_between || [];
+                    while (trip.legs_between.length < Math.max(0, trip.stops.length - 1)) trip.legs_between.push({ mode: 'car', booking_status: 'todo' });
+                    for(let i=0; i<30; i++) collapsedState[i] = true;
+                    if (map) renderMap();
+                }
+            };
+            const createNewTrip = () => { trip.id = Math.random().toString(36).substring(2, 10); trip.name = "Nuovo Viaggio"; trip.stops = []; trip.legs_between = []; currentTripId.value = trip.id; window.history.pushState({}, '', `?trip_id=${trip.id}`); if (map) renderMap(); };
+            const handleInput = () => { if(searchQuery.value.length < 3) return; autocompleteService.getPlacePredictions({ input: searchQuery.value }, (res, status) => { predictions.value = (status === 'OK') ? res : []; }); };
+            const selectPrediction = (p) => { placesService.getDetails({ placeId: p.place_id }, (place, status) => { if (status === 'OK') { selectedPlace.value = { name: place.name, lat: place.geometry.location.lat(), lon: place.geometry.location.lng() }; predictions.value = []; searchQuery.value = ""; } }); };
+            const addStop = () => { if (!selectedPlace.value) return; trip.stops.push({ ...selectedPlace.value, overnight: newStop.overnight, booking_status: newStop.status, note: newStop.note }); if (trip.stops.length > 1) trip.legs_between.push({ mode: newStop.legMode, booking_status: newStop.legStatus, note: "" }); selectedPlace.value = null; newStop.note = ""; debouncedSave(); renderMap(); };
+            const removeStop = (idx) => { trip.stops.splice(idx, 1); if (trip.legs_between.length >= trip.stops.length) trip.legs_between.splice(Math.max(0, idx - 1), 1); debouncedSave(); renderMap(); };
+            let saveTimeout;
+            const debouncedSave = () => { saving.value = true; clearTimeout(saveTimeout); saveTimeout = setTimeout(async () => { await supabaseClient.from('itineraries').upsert({ trip_id: trip.id, trip_data: { name: trip.name, trip_start_date: trip.startDate, stops: trip.stops, legs_between: trip.legs_between, last_updated: new Date().toISOString() } }); saving.value = false; fetchTrips(); }, 1000); };
+            const formatDate = (d) => new Date(d).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' });
+            const getTransportIcon = (m) => ({ 'car': '🚗', 'auto': '🚗', 'train': '🚆', 'plane': '✈️', 'bus': '🚌' }[m] || '➡️');
+            const getTransportName = (m) => ({ 'car': 'Auto', 'auto': 'Auto', 'train': 'Treno', 'plane': 'Aereo', 'bus': 'Bus' }[m] || m);
+            const formatDuration = (s) => { if(!s) return ''; const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); return `${h}h ${m}m`; };
+            const getDaySummary = (day) => { const modes = new Set(); day.items.forEach(i => { if(i.legBefore && !i.legBefore.isSameLocation) modes.add(getTransportName(i.legBefore.mode)); }); return Array.from(modes).join(" + "); };
+            
+            // --- CLEAN PDF ---
+            const cleanText = (str) => { 
+                if (!str) return "";
+                const map = {'à':'a','è':'e','é':'e','ì':'i','ò':'o','ù':'u'};
+                return str.replace(/[àèéìòù]/g, m => map[m]).replace(/[^\x20-\x7E]/g, '');
             };
 
             const generatePDF = () => {
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF();
-                doc.setFont("helvetica", "bold"); doc.setFontSize(22); doc.text(trip.name, 10, 20);
-                doc.setFont("helvetica", "normal"); doc.setFontSize(12); doc.setTextColor(100); doc.text(`Inizio: ${trip.startDate}`, 10, 28);
-                let y = 45; doc.setTextColor(0);
-                trip.stops.forEach((s, i) => {
-                    if (y > 270) { doc.addPage(); y = 20; }
-                    doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.text(`${i+1}. ${s.name}`, 10, y);
-                    y += 7; doc.setFont("helvetica", "normal"); doc.setFontSize(11);
-                    doc.text(`   ${getStatusIcon(s.status)} ${s.overnight ? formatStatus(s.status) : "Visita rapida"}`, 10, y);
-                    if (s.note) { y += 6; doc.setTextColor(80); doc.text(`   Note: ${s.note}`, 10, y); doc.setTextColor(0); }
-                    if (legs.value[i]) {
-                        y += 8; doc.setFillColor(240, 240, 250); doc.rect(10, y-5, 180, 8, 'F');
-                        doc.setFontSize(10); doc.setTextColor(0, 50, 200); doc.text(`   ⬇ Guida: ${legs.value[i].text}`, 12, y); doc.setTextColor(0);
-                    }
-                    y += 15;
+                const pageWidth = doc.internal.pageSize.getWidth();
+                
+                doc.setFont("helvetica", "bold"); doc.setFontSize(22);
+                doc.text(cleanText(trip.name), 10, 20);
+                
+                doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(80);
+                doc.text(`Inizio: ${formatDate(trip.startDate)}`, 10, 28); doc.setTextColor(0);
+
+                let y = 45;
+                itineraryDays.value.forEach(day => {
+                    if (y > 260) { doc.addPage(); y = 20; }
+                    doc.setFillColor(240, 240, 240); doc.rect(10, y - 6, pageWidth - 20, 8, 'F');
+                    doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+                    
+                    let headerTxt = `Giorno ${day.dayNum} (${formatDate(day.date)})`;
+                    if (day.summary) headerTxt += `  |  ${cleanText(day.summary)}`;
+                    headerTxt += `  |  ${cleanText(day.routeStr)}`;
+                    doc.text(headerTxt, 12, y); y += 10;
+
+                    day.items.forEach(item => {
+                        if (y > 270) { doc.addPage(); y = 20; }
+                        doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+                        const prefix = item.stop.overnight ? "HOTEL" : "VISITA";
+                        doc.text(`${prefix}: ${cleanText(item.stop.name)}`, 15, y);
+                        
+                        if(item.stop.note || item.stop.overnight) {
+                            y += 5; doc.setFont("helvetica", "italic"); doc.setFontSize(10); doc.setTextColor(60);
+                            let det = item.stop.overnight ? (item.stop.booking_status === 'booked' ? 'Prenotato' : 'Da prenotare') : '';
+                            if(item.stop.note) det += (det ? ' - ' : '') + cleanText(item.stop.note);
+                            doc.text(det, 20, y); doc.setTextColor(0);
+                        }
+                        y += 8;
+
+                        if (item.legAfter && !item.legAfter.isSameLocation) {
+                            if (y > 270) { doc.addPage(); y = 20; }
+                            doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(100);
+                            const mode = getTransportName(item.legAfter.mode).toUpperCase();
+                            let legTxt = `   |   ${cleanText(mode)}`;
+                            if(item.legAfter.duration_s) legTxt += ` (${formatDuration(item.legAfter.duration_s)})`;
+                            doc.text(legTxt, 15, y); doc.setTextColor(0); y += 8;
+                        }
+                    });
+                    y += 5; 
                 });
-                doc.save("viaggio.pdf");
+                doc.save(cleanText(trip.name) + ".pdf");
             };
 
-            const initSortable = () => {
-                Sortable.create(document.getElementById('sortable-list'), {
-                    animation: 150, handle: '.stop-card',
-                    onEnd: (evt) => {
-                        const item = trip.stops.splice(evt.oldIndex, 1)[0]; trip.stops.splice(evt.newIndex, 0, item);
-                        saveToCloud(); refreshMap();
-                    }
-                });
-            };
-
-            const copyLink = () => { navigator.clipboard.writeText(window.location.href); alert("Link copiato!"); };
-            const formatStatus = (s) => ({ 'todo': 'Da prenotare', 'provisional': 'Provvisorio', 'booked': 'Prenotato' }[s] || s);
-            const getStatusIcon = (s) => ({ 'todo': '🔴', 'provisional': '🟠', 'booked': '🟢' }[s] || '📍');
+            const cloneTrip = () => { if(!confirm("Copia?")) return; trip.id = Math.random().toString(36).substring(2,10); trip.name += " (Clone)"; currentTripId.value = trip.id; window.history.pushState({},'',`?trip_id=${trip.id}`); debouncedSave(); };
+            const deleteTrip = async () => { if(!confirm("Elimina?")) return; await supabaseClient.from('itineraries').upsert({ trip_id: trip.id, trip_data: { ...trip, is_deleted: true }}); createNewTrip(); fetchTrips(); };
+            const switchTrip = () => { currentTripId.value === 'NEW' ? createNewTrip() : loadTrip(currentTripId.value); };
+            const clearSelection = () => selectedPlace.value = null;
+            const copyLink = () => { navigator.clipboard.writeText(window.location.href); alert("Link copiato"); };
 
             return { 
-                trip, tripList, currentTripId, switchTrip, cloneTrip, deleteTrip, exportJSON, importJSON,
-                legs, searchQuery, predictions, selectedPlace, newStop, saving, handleInput, selectPrediction, addStop, removeStop, clearSelection, saveToCloud, generatePDF, copyLink, formatStatus, getStatusIcon 
+                trip, tripList, currentTripId, switchTrip, searchQuery, predictions, selectedPlace, newStop, saving, itineraryDays,
+                handleInput, selectPrediction, addStop, removeStop, clearSelection, debouncedSave,
+                formatDate, getTransportIcon, getTransportName, formatDuration, getDaySummary,
+                generatePDF, cloneTrip, deleteTrip, copyLink,
+                collapsedState, toggleCollapse, editingDayIdx, toggleEditDay, finishEdit,
+                activeSearchIdx, moveQuery, movePredictions, handleEditSearch, startEditSearch, applyEditSearch,
+                user, authPin, authError, signIn, signOut
             };
         }
     }).mount('#app');
