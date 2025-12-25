@@ -186,7 +186,6 @@
         <div style="margin-top:auto;">
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
                 <button class="secondary" @click="generatePDF">📄 PDF</button>
-                <button class="secondary" @click="copyLink">🔗 Link</button>
                 <button class="secondary" @click="cloneTrip">©️ Clona</button>
                 <button class="secondary" style="color:#d93025; border-color:#d93025;" @click="deleteTrip">🗑 Elimina</button>
             </div>
@@ -705,13 +704,12 @@
             const deleteTrip = async () => { if(!confirm("Elimina?")) return; await supabaseClient.from('itineraries').upsert({ trip_id: trip.id, trip_data: { ...trip, is_deleted: true }}); createNewTrip(); fetchTrips(); };
             const switchTrip = () => { currentTripId.value === 'NEW' ? createNewTrip() : loadTrip(currentTripId.value); };
             const clearSelection = () => selectedPlace.value = null;
-            const copyLink = () => { navigator.clipboard.writeText(window.location.href); alert("Link copiato"); };
 
             return { 
                 trip, tripList, currentTripId, switchTrip, searchQuery, predictions, selectedPlace, newStop, saving, itineraryDays,
                 handleInput, selectPrediction, addStop, removeStop, clearSelection, debouncedSave,
                 formatDate, getTransportIcon, getTransportName, formatDuration, getDaySummary,
-                generatePDF, cloneTrip, deleteTrip, copyLink,
+                generatePDF, cloneTrip, deleteTrip,
                 collapsedState, toggleCollapse, editingDayIdx, toggleEditDay, finishEdit,
                 activeSearchIdx, moveQuery, movePredictions, handleEditSearch, startEditSearch, applyEditSearch,
                 user, authPin, authError, signIn, signOut
