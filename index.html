@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Viaggio Planner (Google Maps Edition)</title>
+    
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAdstaSUOyOl6PE-UWC8d3q-W5y092K-z4&libraries=places"></script>
+
+    <style>
+        :root { --primary: #4285F4; --bg: #f8f9fa; --card: #ffffff; }
+        body { margin: 0; font-family: 'Roboto', sans-serif; background: var(--bg); display: flex; height: 100vh; overflow: hidden; }
+        
+        #app { display: flex; width: 100%; height: 100%; }
+        .sidebar { width: 340px; background: white; border-right: 1px solid #ddd; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; overflow-y: auto; z-index: 2; box-shadow: 2px 0 5px rgba(0,0,0,0.05); }
+        .main-content { flex: 1; display: flex; flex-direction: column; position: relative; }
+        
+        #map { flex: 1; width: 100%; }
+        
+        .itinerary-panel {
+            height: 45%;
+            background: white;
+            border-top: 1px solid #ddd;
+            overflow-y: auto;
+            padding: 20px;
+            box-shadow: 0 -4px 10px rgba(0,0,0,0.1);
+            z-index: 10;
+        }
+
+        /* UI Components */
+        input, select, button, textarea { width: 100%; padding: 12px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        button { cursor: pointer; background: var(--primary); color: white; border: none; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+        button.secondary { background: #e0e0e0; color: #333; }
+        button:hover { opacity: 0.9; }
+
+        .stop-card {
+            background: #fff; border: 1px solid #e0e0e0; padding: 12px; margin-bottom: 8px; border-radius: 8px;
+            display: flex; justify-content: space-between; align-items: flex-start; cursor: grab; transition: box-shadow 0.2s;
+        }
+        .stop-card:hover { box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .stop-card:active { cursor: grabbing; }
+
+        .search-result { background: white; border-bottom: 1px solid #eee; padding: 10px; cursor: pointer; font-size: 13px; }
+        .search-result:hover { background: #f1f3f4; }
+        
+        .leg-info {
+            background: #e8f0fe; color: #1967d2; font-size: 0.85rem; padding: 4px 8px; 
+            border-radius: 4px; margin-top: 6px; display: inline-block; font-weight: 500;
+        }
+
+        h2 { margin-top: 0; color: #202124; font-size: 1.2rem; }
+        h3 { font-size: 1rem; color: #5f6368; margin-bottom: 10px; }
+        label { font-size: 0.8rem; color: #5f6368; font-weight: bold; display: block; margin-bottom: 4px; }
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <div class="sidebar">
+        <h2>🗺️ Viaggio Planner <span style="font-size:0.7em; color:gray">(Google)</span></h2>
+        
+        <div>
+            <label>Nome Viaggio</label>
+            <input v-model="trip.name" @change="saveToCloud" placeholder="Il mio viaggio in Italia">
+            
+            <label>Data Inizio</label>
+            <input type="date" v-model="trip.startDate" @change="saveToCloud">
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+
+        <h3>➕ Aggiungi Tappa</h3>
+        <input type="text" v-model="searchQuery" @input="handleInput" placeholder="Cerca luogo (Google)...">
+        
+        <div v-if="predictions.length > 0" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; margin-top: -10px; margin-bottom: 10px; border-radius: 0 0 4px 4px;">
+            <div v-for="p in predictions" :key="p.place_id" class="search-result" @click="selectPrediction(p)">
+                <strong>{{ p.structured_formatting.main_text }}</strong><br>
+                <span style="color:gray">{{ p.structured_formatting.secondary_text }}</span>
+            </div>
+        </div>
+
+        <div v-if="selectedPlace">
+            <div style="background: #e6f4ea; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+                <strong>📍 {{ selectedPlace.name }}</strong>
+            </div>
+            
+            <label><input type="checkbox" v-model="newStop.overnight"> Pernottamento qui?</label>
+            
+            <div v-if="newStop.overnight">
+                <label>Stato Prenotazione</label>
+                <select v-model="newStop.status">
+                    <option value="todo">Da prenotare</option>
+                    <option value="provisional">Provvisorio</option>
+                    <option value="booked">Prenotato</option>
+                </select>
+            </div>
+            
+            <textarea v-model="newStop.note" placeholder="Note (es. Hotel Bellavista)..."></textarea>
+            <button @click="addStop">Aggiungi Tappa</button>
+            <button class="secondary" @click="clearSelection" style="margin-top:5px">Annulla</button>
+        </div>
+
+        <div style="margin-top: auto;">
+            <hr style="border: 0; border-top: 1px solid #eee;">
+            <button class="secondary" @click="generatePDF">📄 PDF</button>
+            <button class="secondary" @click="copyLink">🔗 Condividi</button>
+            <div v-if="saving" style="text-align:center; color:green; font-size:0.8rem; margin-top:5px;">Salvataggio...</div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div id="map"></div>
+        
+        <div class="itinerary-panel">
+            <h3>Il tuo Itinerario</h3>
+            <div id="sortable-list">
+                <div v-for="(stop, index) in trip.stops" :key="index" class="stop-card" :data-index="index">
+                    <div style="flex:1">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span style="background:#4285F4; color:white; width:20px; height:20px; border-radius:50%; text-align:center; font-size:12px; line-height:20px;">{{ index + 1 }}</span>
+                            <strong>{{ stop.name }}</strong>
+                        </div>
+                        
+                        <div style="margin-left: 28px; margin-top: 4px; color: #555; font-size: 0.9rem;">
+                            <span v-if="stop.overnight">🌙 {{ formatStatus(stop.status) }}</span>
+                            <span v-else>📍 Visita rapida</span>
+                            <span v-if="stop.note"> — <em>{{ stop.note }}</em></span>
+                        </div>
+
+                        <div v-if="legs[index]" class="leg-info" style="margin-left: 28px;">
+                            🚗 Guida: {{ legs[index].text }}
+                        </div>
+                    </div>
+                    <button @click="removeStop(index)" style="width:auto; padding:5px 10px; background:none; color:#d93025; border:1px solid #eee;">✕</button>
+                </div>
+            </div>
+            <div v-if="trip.stops.length === 0" style="text-align:center; padding:40px; color:#888;">
+                Nessuna tappa. Usa la barra a sinistra per cercare.
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ================= CONFIGURATION =================
+    const SUPABASE_URL = "https://bymrrkyfyjzjrtppxjdg.supabase.co"; 
+    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5bXJya3lmeWp6anJ0cHB4amRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNzIyMDksImV4cCI6MjA4MTc0ODIwOX0.1IEvjgsBwiGwjASeVkQBVBXbRDSt55Fm07nWtvB0N2I"; 
+    
+    // ================= APP LOGIC =================
+    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const { createApp, ref, reactive, onMounted, toRaw } = Vue;
+
+    createApp({
+        setup() {
+            // Data
+            const trip = reactive({ id: null, name: "Nuovo Viaggio", startDate: new Date().toISOString().split('T')[0], stops: [] });
+            const legs = ref([]); // Stores Google Route info
+            
+            // Search / Google Services
+            const searchQuery = ref("");
+            const predictions = ref([]);
+            const selectedPlace = ref(null);
+            const newStop = reactive({ overnight: true, status: "todo", note: "" });
+            const saving = ref(false);
+
+            // Google Maps Objects
+            let map = null;
+            let directionsService = null;
+            let placesService = null;
+            let autocompleteService = null;
+            let markers = [];
+            let polylines = [];
+
+            // 1. INIT
+            onMounted(() => {
+                initGoogleMaps();
+                loadTrip();
+                initSortable();
+            });
+
+            const initGoogleMaps = () => {
+                // Initialize Map
+                const rome = { lat: 41.9028, lng: 12.4964 };
+                map = new google.maps.Map(document.getElementById("map"), {
+                    zoom: 6,
+                    center: rome,
+                    mapTypeControl: false,
+                    streetViewControl: false
+                });
+
+                // Initialize Services
+                directionsService = new google.maps.DirectionsService();
+                placesService = new google.maps.PlacesService(map);
+                autocompleteService = new google.maps.places.AutocompleteService();
+            };
+
+            // 2. SEARCH (Using Google Autocomplete Service)
+            const handleInput = () => {
+                if (!searchQuery.value || searchQuery.value.length < 3) {
+                    predictions.value = [];
+                    return;
+                }
+                autocompleteService.getPlacePredictions({ input: searchQuery.value }, (results, status) => {
+                    if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+                        predictions.value = results;
+                    } else {
+                        predictions.value = [];
+                    }
+                });
+            };
+
+            const selectPrediction = (prediction) => {
+                // We need details (Lat/Lon) which prediction doesn't have fully
+                placesService.getDetails({ placeId: prediction.place_id }, (place, status) => {
+                    if (status === google.maps.places.PlacesServiceStatus.OK) {
+                        selectedPlace.value = {
+                            name: place.name,
+                            lat: place.geometry.location.lat(),
+                            lon: place.geometry.location.lng()
+                        };
+                        predictions.value = [];
+                        searchQuery.value = "";
+                    }
+                });
+            };
+
+            const clearSelection = () => {
+                selectedPlace.value = null;
+                newStop.note = "";
+            };
+
+            // 3. TRIP MANAGEMENT
+            const addStop = () => {
+                if (!selectedPlace.value) return;
+                trip.stops.push({
+                    ...selectedPlace.value,
+                    overnight: newStop.overnight,
+                    status: newStop.status,
+                    note: newStop.note
+                });
+                clearSelection();
+                saveToCloud();
+                refreshMap();
+            };
+
+            const removeStop = (index) => {
+                trip.stops.splice(index, 1);
+                saveToCloud();
+                refreshMap();
+            };
+
+            // 4. MAP & ROUTING (The "Google" Part)
+            const refreshMap = async () => {
+                // Clear old
+                markers.forEach(m => m.setMap(null));
+                polylines.forEach(p => p.setMap(null));
+                markers = [];
+                polylines = [];
+                legs.value = new Array(Math.max(0, trip.stops.length - 1)).fill(null);
+
+                if (trip.stops.length === 0) return;
+
+                const bounds = new google.maps.LatLngBounds();
+
+                // Draw Markers
+                trip.stops.forEach((s, i) => {
+                    const pos = { lat: s.lat, lng: s.lon };
+                    const marker = new google.maps.Marker({
+                        position: pos,
+                        map: map,
+                        label: (i + 1).toString(),
+                        title: s.name
+                    });
+                    markers.push(marker);
+                    bounds.extend(pos);
+                });
+
+                map.fitBounds(bounds);
+                if (trip.stops.length === 1) map.setZoom(12);
+
+                // Calculate Routes (Chain Requests)
+                if (trip.stops.length > 1) {
+                    for (let i = 0; i < trip.stops.length - 1; i++) {
+                        await calculateLeg(i);
+                    }
+                }
+            };
+
+            const calculateLeg = (index) => {
+                return new Promise((resolve) => {
+                    const start = trip.stops[index];
+                    const end = trip.stops[index+1];
+
+                    const req = {
+                        origin: { lat: start.lat, lng: start.lon },
+                        destination: { lat: end.lat, lng: end.lon },
+                        travelMode: google.maps.TravelMode.DRIVING
+                    };
+
+                    directionsService.route(req, (result, status) => {
+                        if (status === google.maps.DirectionsStatus.OK) {
+                            // Render Polyline on Map
+                            const line = new google.maps.Polyline({
+                                path: result.routes[0].overview_path,
+                                strokeColor: "#4285F4",
+                                strokeOpacity: 0.8,
+                                strokeWeight: 5,
+                                map: map
+                            });
+                            polylines.push(line);
+
+                            // Store Data for UI
+                            const leg = result.routes[0].legs[0];
+                            legs.value[index] = {
+                                text: `${leg.duration.text} (${leg.distance.text})`,
+                                seconds: leg.duration.value
+                            };
+                        } else {
+                            console.error("Route failed: " + status);
+                        }
+                        resolve(); // Resolve even if failed to keep loop going
+                    });
+                });
+            };
+
+            // 5. SUPABASE SYNC
+            let saveTimeout;
+            const saveToCloud = () => {
+                saving.value = true;
+                clearTimeout(saveTimeout);
+                saveTimeout = setTimeout(async () => {
+                    const payload = {
+                        name: trip.name,
+                        trip_start_date: trip.startDate,
+                        stops: trip.stops,
+                        last_updated: new Date().toISOString()
+                    };
+                    await supabase.from('itineraries').upsert({ trip_id: trip.id, trip_data: payload });
+                    saving.value = false;
+                }, 1000);
+            };
+
+            const loadTrip = async () => {
+                const params = new URLSearchParams(window.location.search);
+                let tid = params.get('trip_id');
+                if (!tid) {
+                    tid = Math.random().toString(36).substring(2, 10);
+                    window.history.pushState({},'',`?trip_id=${tid}`);
+                }
+                trip.id = tid;
+                const { data } = await supabase.from('itineraries').select('trip_data').eq('trip_id', tid).single();
+                if (data && data.trip_data) {
+                    trip.name = data.trip_data.name;
+                    trip.startDate = data.trip_data.trip_start_date;
+                    trip.stops = data.trip_data.stops || [];
+                    refreshMap();
+                }
+            };
+
+            // 6. UTILS
+            const initSortable = () => {
+                Sortable.create(document.getElementById('sortable-list'), {
+                    animation: 150,
+                    onEnd: (evt) => {
+                        const item = trip.stops.splice(evt.oldIndex, 1)[0];
+                        trip.stops.splice(evt.newIndex, 0, item);
+                        saveToCloud();
+                        refreshMap();
+                    }
+                });
+            };
+
+            const generatePDF = () => {
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                doc.setFontSize(20); doc.text(trip.name, 10, 20);
+                doc.setFontSize(12); doc.text("Generato con Viaggio Planner", 10, 30);
+                
+                let y = 45;
+                trip.stops.forEach((s, i) => {
+                    doc.setFont(undefined, 'bold');
+                    doc.text(`${i+1}. ${s.name}`, 10, y);
+                    
+                    if(legs.value[i]) {
+                        doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(100);
+                        doc.text(`   ⬇ Guida: ${legs.value[i].text}`, 10, y+5);
+                        doc.setTextColor(0); doc.setFontSize(12);
+                        y+=6;
+                    }
+                    y+=10;
+                });
+                doc.save("viaggio.pdf");
+            };
+
+            const copyLink = () => { navigator.clipboard.writeText(window.location.href); alert("Link copiato!"); };
+            const formatStatus = (s) => ({ 'todo': 'Da fare', 'provisional': 'Provvisorio', 'booked': 'Prenotato' }[s] || s);
+
+            return {
+                trip, legs, searchQuery, predictions, selectedPlace, newStop, saving,
+                handleInput, selectPrediction, addStop, removeStop, clearSelection,
+                saveToCloud, generatePDF, copyLink, formatStatus
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
