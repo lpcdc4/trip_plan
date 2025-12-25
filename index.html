@@ -2,8 +2,8 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
-    <title>Viaggio Planner (Private)</title>
-    
+    <title>Viaggio (Private)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
@@ -11,7 +11,10 @@
 
     <style>
         :root { --primary: #4285F4; --bg: #f8f9fa; --booked: #22c55e; --prov: #f97316; --todo: #ef4444; }
-        html, body { height: 100%; margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg); overflow: hidden; }
+        html, body { height: 100%; box-sizing: border-box; margin: 0; padding: 20px; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg); overflow: auto; }
+        img, video, iframe {
+		  max-width: 100%;
+		}
         #app { display: flex; width: 100%; height: 100%; }
         
         /* GLOBAL TOOLTIP */
